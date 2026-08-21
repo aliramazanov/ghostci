@@ -1,0 +1,34 @@
+version: '3'
+
+tasks:
+  default:
+    deps: [check]
+
+  build:
+    desc: Build the binary
+    cmds:
+      - go build -o bin/ghostci ./cmd/ghostci
+
+  test:
+    desc: Run the test suite with the race detector
+    cmds:
+      - go test -race ./...
+
+  check:
+    desc: Everything CI runs
+    cmds:
+      - gofmt -l . | (! grep .)
+      - go vet ./...
+      - go test -race ./...
+
+  cross:
+    desc: Verify it builds for every supported platform
+    cmds:
+      - GOOS=linux GOARCH=amd64 go build -o /dev/null ./...
+      - GOOS=darwin GOARCH=arm64 go build -o /dev/null ./...
+      - GOOS=windows GOARCH=amd64 go build -o /dev/null ./...
+
+  install:
+    desc: Install into GOPATH/bin
+    cmds:
+      - go install ./cmd/ghostci

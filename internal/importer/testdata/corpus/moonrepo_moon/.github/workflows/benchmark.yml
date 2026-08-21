@@ -1,0 +1,71 @@
+name: Benchmark
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - master
+      - develop-*
+  pull_request:
+    # Not supported by CodSpeed!
+    # issue_comment:
+    #   types: [created]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  RUST_LOG: info
+  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+jobs:
+  bench:
+    name: Bench
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'pull_request' ||
+      github.event_name == 'push' && (github.ref == 'refs/heads/master' || startsWith(github.ref,
+      'refs/heads/develop-'))
+    # || github.event.issue.pull_request && contains(github.event.comment.body, '!benchmark')
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - package: moon_affected
+            runner: depot-ubuntu-24.04-16 # 64GB mem
+            mode: walltime
+
+          - package: moon_cache
+            runner: depot-ubuntu-24.04-4 # 16GB mem
+            mode: walltime
+
+          - package: moon_toolchain_plugin
+            runner: depot-ubuntu-24.04-8 # 32GB mem
+            mode: walltime
+
+          - package: moon_workspace
+            runner: depot-ubuntu-24.04-8 # 32GB mem
+            mode: walltime
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: moonrepo/setup-rust@v1
+        with:
+          bins: cargo-codspeed
+          cache: false
+          cache-target: release
+
+      - uses: arduino/setup-protoc@v3
+
+      - name: Build the benchmark targets
+        run: cargo codspeed build -m ${{ matrix.mode }} -p ${{ matrix.package }}
+
+      - name: Run the benchmarks
+        uses: CodSpeedHQ/action@v4
+        with:
+          mode: ${{ matrix.mode }}
+          run: cargo codspeed run -p ${{ matrix.package }}

@@ -1,0 +1,14 @@
+checks:
+  - name: gofmt
+    command: test -z "$(gofmt -l .)"
+    inputs: ["**/*.go"]
+  - name: vet
+    command: go vet ./...
+    inputs: ["**/*.go", "go.mod"]
+  - name: build
+    command: go build ./...
+    inputs: ["**/*.go", "go.mod"]
+  - name: test
+    command: go test -race ./...
+    timeout: 5m
+    inputs: ["**/*.go", "go.mod"]

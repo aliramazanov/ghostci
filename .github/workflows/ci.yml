@@ -1,0 +1,49 @@
+name: CI
+on: [push, pull_request]
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26'
+      - name: Format
+        run: test -z "$(gofmt -l .)"
+      - name: Vet
+        run: go vet ./...
+      - name: Lint
+        uses: golangci/golangci-lint-action@v9
+        with:
+          version: v2.12
+      - name: Test
+        run: go test -race ./...
+      - name: Cross compile
+        run: |
+          GOOS=darwin GOARCH=arm64 go build -o /dev/null ./...
+          GOOS=windows GOARCH=amd64 go build -o /dev/null ./...
+
+  macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26'
+      - name: Test
+        run: go test -race ./...
+
+  windows-builds:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26'
+      - name: Build
+        run: go build ./...
+      - name: Refuses to run rather than hanging
+        run: |
+          go build -o ghostci.exe ./cmd/ghostci
+          ./ghostci.exe version

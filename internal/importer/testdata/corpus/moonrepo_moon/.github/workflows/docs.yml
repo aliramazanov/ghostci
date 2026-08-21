@@ -1,0 +1,20 @@
+name: Docs
+on:
+  push:
+    branches:
+      - master
+jobs:
+  deploy:
+    name: Deploy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+      - uses: voidzero-dev/setup-vp@v1
+      - run: yarn install --immutable
+      - run: bash ./scripts/release/buildPackages.sh
+      - uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./website/build
+          allow_empty_commit: true
