@@ -28,7 +28,7 @@ func TestStatuses(t *testing.T) {
 		"pass", "exit 0",
 		"fail", "exit 1",
 		"output", "echo hello; echo world >&2",
-		"missing", "exec /nonexistent/binary/xyz",
+		"missing", "definitely-not-a-real-command-xyz",
 	), Options{})
 
 	if got := len(res); got != 4 {
@@ -290,4 +290,22 @@ func TestGitHubStepFilesAreScratch(t *testing.T) {
 			t.Errorf("%s: %v — each check must get its own empty files", r.Name, r.Status)
 		}
 	}
+}
+
+// A shell reports a command it could not run as 126 or 127, and both mean the
+// check verified nothing. How a shell reports a failed exec is its own choice:
+// bash exits 127, and macOS reported something else, so the status is recorded
+// rather than demanded. What may never happen on any platform is a pass, which
+// would claim a check ran when no program ever started.
+func TestAFailedExecIsNeverReportedAsAPass(t *testing.T) {
+	t.Parallel()
+
+	res := Run(context.Background(), checks("exec-missing", "exec /nonexistent/binary/xyz"), Options{})
+
+	if res[0].Status == StatusPassed {
+		t.Fatalf("a check whose program never started was reported as passed\noutput: %s", res[0].Output)
+	}
+
+	t.Logf("failed exec reported as %v (unavailable on Linux; recorded here so a "+
+		"platform difference is visible rather than assumed)", res[0].Status)
 }

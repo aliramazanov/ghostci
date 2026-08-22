@@ -191,17 +191,27 @@ func openDescriptors(t *testing.T) int {
 }
 
 func TestAMissingToolIsNotAFailingCheck(t *testing.T) {
+	// A file this test creates, rather than one the operating system happens
+	// to provide: /etc/hostname exists on Linux and not on macOS, so the case
+	// it was meant to cover was never the case being run.
+	notExecutable := filepath.Join(t.TempDir(), "not-executable")
+	if err := os.WriteFile(notExecutable, []byte("data, not a program\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
 	results := Run(context.Background(), []config.Check{
 		{Name: "needs-tool", Command: "definitely-not-a-real-command-xyz --version"},
-		{Name: "not-executable", Command: "/etc/hostname"},
+		{Name: "not-executable", Command: notExecutable},
 		{Name: "real-failure", Command: "exit 1"},
 	}, Options{Jobs: 1})
 
 	if results[0].Status != StatusUnavailable {
-		t.Errorf("a missing command gave %v, want unavailable", results[0].Status)
+		t.Errorf("a missing command gave %v, want unavailable\noutput: %s",
+			results[0].Status, results[0].Output)
 	}
 	if results[1].Status != StatusUnavailable {
-		t.Errorf("a non-executable file gave %v, want unavailable", results[1].Status)
+		t.Errorf("a non-executable file gave %v, want unavailable\noutput: %s",
+			results[1].Status, results[1].Output)
 	}
 	if results[2].Status != StatusFailed {
 		t.Errorf("a real failure gave %v, want failed", results[2].Status)

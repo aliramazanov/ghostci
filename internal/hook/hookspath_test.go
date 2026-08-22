@@ -61,14 +61,8 @@ func TestRelativeHooksPathResolvesAgainstTheWorkTree(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	want, err := filepath.EvalSymlinks(filepath.Join(dir, ".githooks"))
-	if err != nil {
-		want = filepath.Join(dir, ".githooks")
-	}
-	if resolved, err := filepath.EvalSymlinks(filepath.Dir(got)); err == nil {
-		got = filepath.Join(resolved, filepath.Base(got))
-	}
-	if got != want {
+	want := realPath(filepath.Join(dir, ".githooks"))
+	if got := realPath(got); got != want {
 		t.Errorf("Dir = %q, want %q", got, want)
 	}
 }
