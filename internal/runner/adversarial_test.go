@@ -206,12 +206,12 @@ func TestAMissingToolIsNotAFailingCheck(t *testing.T) {
 	}, Options{Jobs: 1})
 
 	if results[0].Status != StatusUnavailable {
-		t.Errorf("a missing command gave %v, want unavailable\noutput: %s",
-			results[0].Status, results[0].Output)
+		t.Errorf("a missing command gave %v (exit %d), want unavailable\noutput: %s",
+			results[0].Status, results[0].ExitCode, results[0].Output)
 	}
 	if results[1].Status != StatusUnavailable {
-		t.Errorf("a non-executable file gave %v, want unavailable\noutput: %s",
-			results[1].Status, results[1].Output)
+		t.Errorf("a non-executable file gave %v (exit %d), want unavailable\noutput: %s",
+			results[1].Status, results[1].ExitCode, results[1].Output)
 	}
 	if results[2].Status != StatusFailed {
 		t.Errorf("a real failure gave %v, want failed", results[2].Status)
@@ -240,5 +240,44 @@ func TestAMissingWorkingDirectoryIsNamed(t *testing.T) {
 	}
 	if strings.Contains(results[0].Output, "bash") {
 		t.Errorf("the report blames the shell: %q", results[0].Output)
+	}
+}
+
+// A file the operating system will not execute is settled before any shell
+// runs, because shells disagree on the status they return for it: Linux bash
+// reports 126, and macOS reported neither 126 nor 127, so the same repository
+// gave a different verdict on the two platforms.
+func TestANonExecutableFileIsUnavailableOnEveryPlatform(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "build.sh")
+	if err := os.WriteFile(path, []byte("#!/bin/sh\necho built\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	res := Run(context.Background(), []config.Check{{Name: "absolute", Command: path}}, Options{})
+	if res[0].Status != StatusUnavailable {
+		t.Errorf("absolute path: got %v (exit %d), want unavailable", res[0].Status, res[0].ExitCode)
+	}
+	if !strings.Contains(res[0].Output, "not executable") {
+		t.Errorf("the reason does not say why: %q", res[0].Output)
+	}
+
+	// The same file relative to the check's directory.
+	rel := Run(context.Background(),
+		[]config.Check{{Name: "relative", Command: "./build.sh", Dir: dir}}, Options{Root: dir})
+	if rel[0].Status != StatusUnavailable {
+		t.Errorf("relative path: got %v (exit %d), want unavailable", rel[0].Status, rel[0].ExitCode)
+	}
+
+	// Once it can be executed it is an ordinary check again.
+	if err := os.Chmod(path, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	ok := Run(context.Background(), []config.Check{{Name: "now-executable", Command: path}}, Options{})
+	if ok[0].Status != StatusPassed {
+		t.Errorf("after chmod: got %v (exit %d), want passed\noutput: %s",
+			ok[0].Status, ok[0].ExitCode, ok[0].Output)
 	}
 }

@@ -309,3 +309,27 @@ func TestAFailedExecIsNeverReportedAsAPass(t *testing.T) {
 	t.Logf("failed exec reported as %v (unavailable on Linux; recorded here so a "+
 		"platform difference is visible rather than assumed)", res[0].Status)
 }
+
+// The shell's exit status is what separates a check that failed from one that
+// never ran, so it is kept rather than discarded. macOS returned neither 126
+// nor 127 for a file it refused to execute, and without the number there was
+// nothing to diagnose from.
+func TestResultKeepsTheExitCode(t *testing.T) {
+	t.Parallel()
+
+	res := Run(context.Background(), checks(
+		"pass", "exit 0",
+		"fail", "exit 7",
+		"missing", "definitely-not-a-real-command-xyz",
+	), Options{})
+
+	if got := res[0].ExitCode; got != 0 {
+		t.Errorf("a passing check reported exit %d, want 0", got)
+	}
+	if got := res[1].ExitCode; got != 7 {
+		t.Errorf("a check exiting 7 reported exit %d", got)
+	}
+	if got := res[2].ExitCode; got != 127 {
+		t.Errorf("a missing command reported exit %d, want 127", got)
+	}
+}

@@ -54,9 +54,9 @@ func (p Plan) Deferred() []runner.Result {
 	for _, d := range p.Decisions {
 		switch d.Action {
 		case Skip:
-			out = append(out, runner.Result{Name: d.Check.Name, Status: runner.StatusSkipped, Reason: d.Reason.String()})
+			out = append(out, runner.Result{Name: d.Check.Name, Status: runner.StatusSkipped, Reason: d.Reason.String(), ExitCode: -1})
 		case Cached:
-			out = append(out, runner.Result{Name: d.Check.Name, Status: runner.StatusCached, Reason: d.Reason.String()})
+			out = append(out, runner.Result{Name: d.Check.Name, Status: runner.StatusCached, Reason: d.Reason.String(), ExitCode: -1})
 		}
 	}
 

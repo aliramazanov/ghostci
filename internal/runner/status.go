@@ -54,4 +54,11 @@ type Result struct {
 	Output   string
 	Reason   string
 	Err      error
+
+	// ExitCode is the status the check's shell returned. It is -1 when no
+	// process reached an exit of its own, which covers a check that was
+	// skipped, served from cache, killed by a signal, or never started.
+	// Knowing the number is what separates a failing test from a shell that
+	// could not run the command at all.
+	ExitCode int
 }

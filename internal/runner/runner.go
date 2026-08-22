@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"time"
 
 	"sync"
@@ -110,6 +111,15 @@ func runOne(ctx context.Context, index int, chk config.Check, opts Options) Resu
 		return res
 	}
 
+	if reason, ok := unrunnable(chk.Command, cmd.Dir); ok {
+		res.Status = StatusUnavailable
+		res.Err = errors.New(reason)
+		res.Output = reason
+		res.ExitCode = -1
+
+		return res
+	}
+
 	scratch, cleanup := scratchEnv()
 	defer cleanup()
 
@@ -120,6 +130,7 @@ func runOne(ctx context.Context, index int, chk config.Check, opts Options) Resu
 	res.Duration = time.Since(start)
 	res.Output = buf.String()
 	res.Status, res.Err = classify(ctx, err)
+	res.ExitCode = exitCode(err)
 
 	return res
 }
@@ -152,6 +163,48 @@ func checkTimeout(chk config.Check, opts Options) time.Duration {
 	}
 
 	return opts.Timeout
+}
+
+// unrunnable reports a command the operating system will not execute at all,
+// which is not a failing check: nothing about the code was tested. Shells
+// disagree on the status they return for it, and macOS returned neither of the
+// two this once relied on, so the case is settled before a shell is involved.
+//
+// Only a command that is a single path is answered here. Anything longer is
+// left to the shell, whose 126 and 127 still classify the common cases.
+func unrunnable(command, dir string) (string, bool) {
+	fields := strings.Fields(strings.TrimSpace(command))
+	if len(fields) != 1 || !strings.ContainsAny(fields[0], `/\`) {
+		return "", false
+	}
+
+	path := fields[0]
+	if !filepath.IsAbs(path) {
+		path = filepath.Join(dir, path)
+	}
+
+	info, err := os.Stat(path)
+	if err != nil || info.IsDir() || info.Mode().Perm()&0o111 != 0 {
+		return "", false
+	}
+
+	return fields[0] + " is not executable", true
+}
+
+// exitCode reports what the shell returned. Anything that did not reach an
+// exit of its own is -1 rather than 0, so a check that never ran is never
+// mistaken for one that succeeded.
+func exitCode(err error) int {
+	if err == nil {
+		return 0
+	}
+
+	var exitErr *exec.ExitError
+	if errors.As(err, &exitErr) {
+		return exitErr.ExitCode()
+	}
+
+	return -1
 }
 
 func classify(ctx context.Context, err error) (Status, error) {
