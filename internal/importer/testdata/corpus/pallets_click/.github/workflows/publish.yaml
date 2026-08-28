@@ -1,7 +1,7 @@
-name: Publish
+name: publish-release
 on:
   push:
-    tags: ['*']
+    tags: ["*"]
 permissions: {}
 concurrency:
   group: publish-${{ github.event.push.ref }}
@@ -45,9 +45,6 @@ jobs:
           GH_TOKEN: ${{ github.token }}
   publish-pypi:
     needs: [build]
-    environment:
-      name: publish
-      url: https://pypi.org/project/Click/${{ github.ref_name }}
     runs-on: ubuntu-latest
     permissions:
       id-token: write
