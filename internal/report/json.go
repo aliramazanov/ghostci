@@ -16,6 +16,8 @@ type jsonCheck struct {
 	Optional   bool   `json:"optional,omitempty"`
 	Reason     string `json:"reason,omitempty"`
 	Output     string `json:"output,omitempty"`
+
+	ExitCode *int `json:"exit_code,omitempty"`
 }
 
 type jsonReport struct {
@@ -46,6 +48,10 @@ func JSON(w io.Writer, results []runner.Result, elapsed time.Duration, v Verdict
 			DurationMS: r.Duration.Milliseconds(),
 			Optional:   r.Optional,
 			Reason:     r.Reason,
+		}
+		if r.ExitCode >= 0 {
+			code := r.ExitCode
+			c.ExitCode = &code
 		}
 		if r.Status.CountsAsFailure() {
 			c.Output = r.Output

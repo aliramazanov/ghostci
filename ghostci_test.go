@@ -93,8 +93,6 @@ checks:
 	}
 }
 
-// An optional check is reported but does not fail the run, matching
-// continue-on-error in the workflow it came from.
 func TestFailedIgnoresOptionalChecks(t *testing.T) {
 	t.Parallel()
 
@@ -115,9 +113,6 @@ checks:
 	}
 }
 
-// The status constants must be reachable and comparable from outside the
-// module. Aliasing Status without exporting them left callers with a value
-// they could not test against anything.
 func TestStatusConstantsAreUsable(t *testing.T) {
 	t.Parallel()
 

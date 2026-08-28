@@ -5,9 +5,9 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
-	"syscall"
 	"testing"
 	"time"
 
@@ -52,10 +52,10 @@ func TestRunsInParallel(t *testing.T) {
 	t.Parallel()
 	start := time.Now()
 	res := Run(context.Background(), checks(
-		"a", "sleep 0.5",
-		"b", "sleep 0.5",
-		"c", "sleep 0.5",
-		"d", "sleep 0.5",
+		"a", "sleep 0.5 && echo a",
+		"b", "sleep 0.5 && echo b",
+		"c", "sleep 0.5 && echo c",
+		"d", "sleep 0.5 && echo d",
 	), Options{Jobs: 4})
 	elapsed := time.Since(start)
 
@@ -129,6 +129,9 @@ func TestPerCheckTimeoutOverridesGlobal(t *testing.T) {
 
 func TestGrandchildIsKilled(t *testing.T) {
 	t.Parallel()
+	if runtime.GOOS == "windows" {
+		t.Skip("process groups are Unix-specific")
+	}
 	pidFile := filepath.Join(t.TempDir(), "grandchild.pid")
 
 	cmd := fmt.Sprintf("sleep 60 & echo $! > %s; wait", pidFile)
@@ -146,7 +149,9 @@ func TestGrandchildIsKilled(t *testing.T) {
 		t.Fatal("grandchild never recorded its pid")
 	}
 	if alive := waitForExit(pid, 10*time.Second); alive {
-		_ = syscall.Kill(pid, syscall.SIGKILL)
+		if process, err := os.FindProcess(pid); err == nil {
+			_ = process.Kill()
+		}
 		t.Fatalf("grandchild %d survived cancellation: process group was not killed", pid)
 	}
 }
@@ -167,12 +172,14 @@ func readPID(t *testing.T, path string) int {
 func waitForExit(pid int, within time.Duration) (stillAlive bool) {
 	deadline := time.Now().Add(within)
 	for time.Now().Before(deadline) {
-		if err := syscall.Kill(pid, 0); err != nil {
+		process, err := os.FindProcess(pid)
+		if err != nil || process.Signal(nil) != nil {
 			return false
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
-	return syscall.Kill(pid, 0) == nil
+	process, err := os.FindProcess(pid)
+	return err == nil && process.Signal(nil) == nil
 }
 
 func TestOutputIsBounded(t *testing.T) {
@@ -292,11 +299,6 @@ func TestGitHubStepFilesAreScratch(t *testing.T) {
 	}
 }
 
-// A shell reports a command it could not run as 126 or 127, and both mean the
-// check verified nothing. How a shell reports a failed exec is its own choice:
-// bash exits 127, and macOS reported something else, so the status is recorded
-// rather than demanded. What may never happen on any platform is a pass, which
-// would claim a check ran when no program ever started.
 func TestAFailedExecIsNeverReportedAsAPass(t *testing.T) {
 	t.Parallel()
 
@@ -310,10 +312,6 @@ func TestAFailedExecIsNeverReportedAsAPass(t *testing.T) {
 		"platform difference is visible rather than assumed)", res[0].Status)
 }
 
-// The shell's exit status is what separates a check that failed from one that
-// never ran, so it is kept rather than discarded. macOS returned neither 126
-// nor 127 for a file it refused to execute, and without the number there was
-// nothing to diagnose from.
 func TestResultKeepsTheExitCode(t *testing.T) {
 	t.Parallel()
 
@@ -331,5 +329,45 @@ func TestResultKeepsTheExitCode(t *testing.T) {
 	}
 	if got := res[2].ExitCode; got != 127 {
 		t.Errorf("a missing command reported exit %d, want 127", got)
+	}
+}
+
+func TestTheSameCommandInTheSameDirectoryTakesTurns(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	same := []config.Check{
+		{Name: "leg-1", Command: "sleep 0.4", Dir: dir, Env: map[string]string{"TAGS": "a"}},
+		{Name: "leg-2", Command: "sleep 0.4", Dir: dir, Env: map[string]string{"TAGS": "b"}},
+		{Name: "leg-3", Command: "sleep 0.4", Dir: dir, Env: map[string]string{"TAGS": "c"}},
+	}
+
+	start := time.Now()
+	for _, r := range Run(context.Background(), same, Options{Jobs: 4}) {
+		if r.Status != StatusPassed {
+			t.Fatalf("%s: %v", r.Name, r.Status)
+		}
+	}
+
+	if elapsed := time.Since(start); elapsed < 1100*time.Millisecond {
+		t.Errorf("three legs of the same command took %v, so they overlapped", elapsed)
+	}
+}
+
+func TestTheSameCommandInDifferentDirectoriesStillRunsAtOnce(t *testing.T) {
+	t.Parallel()
+
+	a, b, c := t.TempDir(), t.TempDir(), t.TempDir()
+	checks := []config.Check{
+		{Name: "a", Command: "sleep 0.5", Dir: a},
+		{Name: "b", Command: "sleep 0.5", Dir: b},
+		{Name: "c", Command: "sleep 0.5", Dir: c},
+	}
+
+	start := time.Now()
+	Run(context.Background(), checks, Options{Jobs: 4})
+
+	if elapsed := time.Since(start); elapsed > 1200*time.Millisecond {
+		t.Errorf("took %v: separate directories were serialised needlessly", elapsed)
 	}
 }

@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"syscall"
@@ -33,25 +34,41 @@ type options struct {
 	since    string
 	hookMode bool
 	jsonOut  bool
+	quiet    bool
 }
 
-func parseRunFlags(args []string) (options, error) {
+func runFlagSet(o *options) *flag.FlagSet {
 	fs := flag.NewFlagSet("ghostci", flag.ContinueOnError)
-	fs.SetOutput(os.Stderr)
-
-	var o options
 
 	fs.StringVar(&o.file, "f", "", "path to config file (default: the nearest "+defaultConfig+")")
+
 	fs.IntVar(&o.jobs, "j", 0, "max checks to run at once (default: CPU count)")
+	fs.IntVar(&o.jobs, "jobs", 0, "same as -j")
+
 	fs.BoolVar(&o.failFast, "fail-fast", false, "stop the remaining checks on first failure")
+
 	fs.DurationVar(&o.timeout, "timeout", 0, "default per-check timeout (0 = none)")
+
 	fs.BoolVar(&o.all, "all", false, "run every check, ignoring which files changed")
 	fs.BoolVar(&o.explain, "explain", false, "print why each check ran, was cached, or was skipped")
+
 	fs.BoolVar(&o.noCache, "no-cache", false,
 		"re-run everything selected, ignoring recorded passes (results are still recorded)")
+
 	fs.StringVar(&o.since, "since", "", "compare against this ref instead of the upstream branch")
 	fs.BoolVar(&o.hookMode, "hook", false, "running as a git pre-push hook")
 	fs.BoolVar(&o.jsonOut, "json", false, "print one JSON document instead of the live report")
+	fs.BoolVar(&o.quiet, "quiet", false, "say nothing unless something needs attention")
+	fs.BoolVar(&o.quiet, "q", false, "same as -quiet")
+
+	return fs
+}
+
+func parseRunFlags(args []string) (options, error) {
+	var o options
+
+	fs := runFlagSet(&o)
+	fs.SetOutput(os.Stderr)
 
 	fs.Usage = func() {
 		fmt.Fprintf(os.Stderr, "usage: ghostci [flags]\n\nRuns the checks in %s in parallel.\n\nflags:\n",
@@ -164,6 +181,10 @@ func reportNothingToRun(plan engine.Plan, opts options) int {
 		return exitOK
 	}
 
+	if opts.quiet {
+		return exitOK
+	}
+
 	for _, r := range deferred {
 		report.Line(os.Stdout, r)
 	}
@@ -176,39 +197,59 @@ func reportNothingToRun(plan engine.Plan, opts options) int {
 func runPlan(ctx context.Context, eng *engine.Engine, plan engine.Plan,
 	checks []config.Check, opts options) int {
 
-	onResult := func(runner.Result) {}
+	live := !opts.jsonOut && !opts.quiet
 
-	if !opts.jsonOut {
+	var obs engine.Observer
+
+	var progress *runningChecks
+
+	if live {
 		fmt.Printf("ghostci: running %d of %d checks\n\n", plan.Count(engine.Run), len(checks))
 
 		var mu sync.Mutex
 
-		onResult = func(res runner.Result) {
+		progress = newRunningChecks(os.Stdout, &mu)
+
+		obs.OnStart = progress.started
+		obs.OnResult = func(res runner.Result) {
 			mu.Lock()
 			defer mu.Unlock()
+
+			progress.finished(res.Name)
 			report.Line(os.Stdout, res)
 		}
 	}
 
 	start := time.Now()
-	results := eng.Execute(ctx, plan, onResult)
+
+	if progress != nil {
+		stop := progress.announceSlowOnes()
+		defer stop()
+	}
+
+	results := eng.Execute(ctx, plan, obs)
 
 	verdict := report.Verdict{
 		Interrupted:     ctx.Err() != nil && engine.Cancelled(results),
 		Stale:           eng.Stale(plan, results),
 		Unavailable:     engine.Unavailable(results),
 		WatchingNothing: eng.WatchingNothing(),
+		Overridden:      eng.OverriddenContext(),
 	}
 
-	if opts.jsonOut {
+	code := verdictExit(results, verdict, opts.hookMode)
+
+	switch {
+	case opts.jsonOut:
 		if err := report.JSON(os.Stdout, results, time.Since(start), verdict); err != nil {
 			return exitBadUsage
 		}
-	} else {
+	case opts.quiet && code == exitOK && !verdict.NeedsAttention():
+	default:
 		report.Summary(os.Stdout, results, time.Since(start), verdict)
 	}
 
-	return verdictExit(results, verdict, opts.hookMode)
+	return code
 }
 
 func verdictExit(results []runner.Result, verdict report.Verdict, hookMode bool) int {
@@ -337,3 +378,76 @@ func onlyDeletions(refs []hook.Ref) bool {
 
 	return true
 }
+
+const slowAfter = 10 * time.Second
+
+type runningChecks struct {
+	w     io.Writer
+	mu    *sync.Mutex
+	since map[string]time.Time
+	told  map[string]time.Time
+}
+
+func newRunningChecks(w io.Writer, mu *sync.Mutex) *runningChecks {
+	return &runningChecks{w: w, mu: mu, since: map[string]time.Time{}, told: map[string]time.Time{}}
+}
+
+func (r *runningChecks) started(name string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	r.since[name] = time.Now()
+}
+
+func (r *runningChecks) finished(name string) {
+	delete(r.since, name)
+	delete(r.told, name)
+}
+
+func (r *runningChecks) announceSlowOnes() (stop func()) {
+	done := make(chan struct{})
+	ticker := time.NewTicker(slowAfter / 2)
+
+	go func() {
+		for {
+			select {
+			case <-done:
+				ticker.Stop()
+
+				return
+			case now := <-ticker.C:
+				r.announce(now)
+			}
+		}
+	}()
+
+	return func() { close(done) }
+}
+
+func (r *runningChecks) announce(now time.Time) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	names := make([]string, 0, len(r.since))
+
+	for name, began := range r.since {
+		if now.Sub(began) < slowAfter {
+			continue
+		}
+
+		if last, said := r.told[name]; said && now.Sub(last) < slowAfter {
+			continue
+		}
+
+		names = append(names, name)
+	}
+
+	sort.Strings(names)
+
+	for _, name := range names {
+		fmt.Fprintf(r.w, "  running  %-24s %s\n", name, dur(now.Sub(r.since[name])))
+		r.told[name] = now
+	}
+}
+
+func dur(d time.Duration) string { return d.Round(time.Second).String() }

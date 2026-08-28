@@ -12,16 +12,6 @@ type Context map[string]any
 
 type UndecidableError = pipeline.UndecidableError
 
-var undecidable = map[string]bool{
-	"needs":   true,
-	"steps":   true,
-	"secrets": true,
-	"inputs":  true,
-	"jobs":    true,
-
-	"vars": true,
-}
-
 type unknown struct{ value pipeline.Value }
 
 func Unknown(source string) any { return unknown{value: pipeline.Unknown(source)} }
@@ -62,9 +52,6 @@ func Eval(n Node, ctx Context) (any, error) {
 	case Ident:
 		if got, ok := ctx[v.Name]; ok {
 			return decidable(got)
-		}
-		if undecidable[lower(v.Name)] {
-			return nil, &UndecidableError{Context: lower(v.Name)}
 		}
 
 		return nil, &UndecidableError{Context: lower(v.Name)}

@@ -145,7 +145,12 @@ func (c *Config) validate() error {
 }
 
 func validateGlobs(chk Check) error {
-	for field, globs := range map[string][]string{"inputs": chk.Inputs, "exclude": chk.Exclude} {
+	for _, f := range []struct {
+		field string
+		globs []string
+	}{{"inputs", chk.Inputs}, {"exclude", chk.Exclude}} {
+		field, globs := f.field, f.globs
+
 		for _, g := range globs {
 			if !doublestar.ValidatePattern(g) {
 				return fmt.Errorf("config: check %q: %s: %q is not a valid glob", chk.Name, field, g)

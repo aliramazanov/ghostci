@@ -313,3 +313,27 @@ func TestArraysAndObjectsStringifyAsGitHubNamesThem(t *testing.T) {
 		}
 	}
 }
+
+func TestIndexReadsTheSameAsAProperty(t *testing.T) {
+	t.Parallel()
+
+	ctx := Context{"env": Strict{Name: "env", Values: map[string]any{"KNOWN": "yes"}}}
+
+	for _, src := range []string{"env.KNOWN", "env['KNOWN']"} {
+		got, err := EvalString(src, ctx)
+
+		if err != nil {
+			t.Errorf("%s: %v", src, err)
+		}
+
+		if got != "yes" {
+			t.Errorf("%s = %q, want yes", src, got)
+		}
+	}
+
+	for _, src := range []string{"env.MISSING", "env['MISSING']"} {
+		if _, err := EvalString(src, ctx); err == nil {
+			t.Errorf("%s resolved without error; an absent name is not the empty string", src)
+		}
+	}
+}

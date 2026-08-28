@@ -5,10 +5,8 @@ import (
 	"flag"
 	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
 
-	"github.com/aliramazanov/ghostci/internal/git"
 	"github.com/aliramazanov/ghostci/internal/importer"
 	"github.com/aliramazanov/ghostci/internal/toolchain"
 )
@@ -37,7 +35,6 @@ func runInit(args []string) int {
 	}
 
 	a := localAssumptions()
-	repo := git.Discover(".")
 
 	path, _ := resolveSource(*dir, *from)
 
@@ -74,13 +71,31 @@ func runInit(args []string) int {
 
 	res.Ledger(os.Stdout, a)
 	reportToolchains(os.Stdout, res)
-	if repo.IsRepo {
-		ignoreCacheDir(os.Stdout, repo.Root)
-	}
 
 	fmt.Printf("\nwrote %s\n", *out)
+
+	if len(res.Checks) == 0 {
+		fmt.Printf("nothing runs by default: no step could be imported as a check\n")
+		if n := len(res.Heavy); n > 0 {
+			fmt.Printf("%d %s held back in %s, each with the reason above it; uncomment any you want\n",
+				n, plural(n, "step is", "steps are"), *out)
+		}
+		fmt.Printf("until at least one check is enabled, ghostci has nothing to verify\n")
+
+		return exitOK
+	}
+
 	fmt.Printf("review it, then run: ghostci\n")
+
 	return exitOK
+}
+
+func plural(n int, one, many string) string {
+	if n == 1 {
+		return one
+	}
+
+	return many
 }
 
 func reportToolchains(w *os.File, res *importer.Result) {
@@ -100,27 +115,4 @@ func reportToolchains(w *os.File, res *importer.Result) {
 	}
 	fmt.Fprintf(w, "\ntoolchain mismatches with CI:\n%s\n", strings.Join(mismatches, "\n"))
 	fmt.Fprintf(w, "  checks may pass locally and still fail in CI\n")
-}
-
-func ignoreCacheDir(w *os.File, root string) {
-	path := filepath.Join(root, ".gitignore")
-	existing, err := os.ReadFile(path)
-	if err != nil && !os.IsNotExist(err) {
-		return
-	}
-	for _, line := range strings.Split(string(existing), "\n") {
-		if strings.TrimSpace(line) == cacheDir {
-			return
-		}
-	}
-
-	body := string(existing)
-	if body != "" && !strings.HasSuffix(body, "\n") {
-		body += "\n"
-	}
-	body += cacheDir + "\n"
-	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
-		return
-	}
-	fmt.Fprintf(w, "\nadded %s to .gitignore\n", cacheDir)
 }

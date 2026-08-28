@@ -2,6 +2,7 @@ package importer
 
 import (
 	"fmt"
+	"maps"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -71,9 +72,19 @@ func (im *importState) importWorkflowAt(wf *workflow.Workflow, a Assumptions, de
 
 		for _, combo := range combos {
 			ctxs := make([]expr.Context, 0, len(a.events()))
+
 			for _, event := range a.events() {
+				if depth == 0 && !wf.TriggersOn(event) {
+					continue
+				}
+
 				ctxs = append(ctxs, buildContext(a, event, runnerOS, combo, wf.Env, job.Env))
 			}
+
+			if len(ctxs) == 0 {
+				continue
+			}
+
 			im.importJob(wfName, nj.ID, job, combo, ctxs)
 		}
 	}
@@ -84,9 +95,7 @@ func jobGateContexts(ctxs []expr.Context) []expr.Context {
 
 	for _, ctx := range ctxs {
 		clone := make(expr.Context, len(ctx))
-		for k, v := range ctx {
-			clone[k] = v
-		}
+		maps.Copy(clone, ctx)
 		clone["env"] = expr.Unknown("env, which a job-level if: cannot read")
 		out = append(out, clone)
 	}
@@ -98,6 +107,7 @@ func (im *importState) importJob(wfName, jobID string, job workflow.Job, combo w
 	ctxs []expr.Context) {
 
 	jobCtxs, err := passingContextsVia(job.If, jobGateContexts(ctxs), ctxs)
+
 	if err != nil {
 		im.res.Entries = append(im.res.Entries, Entry{
 			Workflow: wfName, Job: jobID, Step: "(job if:)", Matrix: combo.Label(),
@@ -105,6 +115,7 @@ func (im *importState) importJob(wfName, jobID string, job workflow.Job, combo w
 		})
 		return
 	}
+
 	if len(jobCtxs) == 0 {
 		im.res.Entries = append(im.res.Entries, Entry{
 			Workflow: wfName, Job: jobID, Step: "(job if:)", Matrix: combo.Label(),
@@ -113,6 +124,7 @@ func (im *importState) importJob(wfName, jobID string, job workflow.Job, combo w
 		})
 		return
 	}
+
 	ctxs = jobCtxs
 
 	if sharesStateAcrossSteps(job) {
@@ -179,6 +191,7 @@ func (im *importState) importStep(wfName, jobID string, job workflow.Job,
 	declared := workingDir(im.defaults, job.Defaults, step)
 
 	dir, divergent, err := interpolateAll(declared, passing)
+
 	if err != nil {
 		record(NeedsReview, interpolateReason(declared, err))
 
@@ -195,12 +208,20 @@ func (im *importState) importStep(wfName, jobID string, job workflow.Job,
 		im.res.Warnings = append(im.res.Warnings, fmt.Sprintf("%s/%s: %s", wfName, jobID, w))
 	}
 
+	env, dropped := mergeEnv(passing[0], im.env, job.Env, step.Env)
+
+	if name, reads := readsAny(command, dropped); reads {
+		record(NeedsReview, "the command reads $"+name+", whose value only CI knows")
+
+		return
+	}
+
 	chk := config.Check{
 		Name:     checkName(wfName, jobID, step, i, combo),
 		Command:  command,
 		Dir:      dir,
 		Shell:    shellFor(im.defaults, job.Defaults, step),
-		Env:      mergeEnv(passing[0], im.env, job.Env, step.Env),
+		Env:      env,
 		Inputs:   im.inputsFor(command, dir),
 		Exclude:  im.pathsIgnore,
 		Optional: step.Optional(),
@@ -240,15 +261,19 @@ func (im *importState) importUses(wfName, jobID string, combo workflow.Combinati
 
 func (im *importState) routeCheck(jobID string, chk config.Check) bool {
 	cost, why := classifyCost(jobID, chk.Command)
+
 	if cost != CostHeavy {
 		im.res.Checks = append(im.res.Checks, chk)
 		return false
 	}
+
 	if im.res.HeavyReason == nil {
 		im.res.HeavyReason = map[string]string{}
 	}
+
 	im.res.HeavyReason[chk.Name] = why
 	im.res.Heavy = append(im.res.Heavy, chk)
+
 	return true
 }
 
@@ -397,21 +422,25 @@ func (im *importState) importJobAsOne(wfName, jobID string, job workflow.Job,
 		stepCtxs := overlayEnv(ctxs, step.Env)
 
 		passing, err := passingContexts(step.If, stepCtxs)
+
 		if err != nil {
 			im.deferJob(entry, gateReason(step.If, err))
 
 			return
 		}
+
 		if len(passing) == 0 {
 			continue
 		}
 
 		command, divergent, err := interpolateAll(step.Run, passing)
+
 		if err != nil {
 			im.deferJob(entry, interpolateReason(step.Run, err))
 
 			return
 		}
+
 		if divergent {
 			im.deferJob(entry, "a command in this job differs by triggering event")
 
@@ -419,13 +448,16 @@ func (im *importState) importJobAsOne(wfName, jobID string, job workflow.Job,
 		}
 
 		stepDir := workingDir(im.defaults, job.Defaults, step)
+
 		if stepDir != "" {
 			resolved, divergent, err := interpolateAll(stepDir, passing)
+
 			if err != nil {
 				im.deferJob(entry, interpolateReason(stepDir, err))
 
 				return
 			}
+
 			if divergent {
 				im.deferJob(entry, "working-directory differs by triggering event")
 
@@ -445,12 +477,19 @@ func (im *importState) importJobAsOne(wfName, jobID string, job workflow.Job,
 
 	command, dir := mergeCommands(commands, dirs)
 
+	env, dropped := mergeEnv(ctxs[0], im.env, job.Env, nil)
+	if name, reads := readsAny(command, dropped); reads {
+		im.deferJob(entry, "the command reads $"+name+", whose value only CI knows")
+
+		return
+	}
+
 	chk := config.Check{
 		Name:     mergedName(wfName, jobID, combo),
 		Command:  command,
 		Dir:      dir,
 		Shell:    shellFor(im.defaults, job.Defaults, workflow.Step{}),
-		Env:      mergeEnv(ctxs[0], im.env, job.Env, nil),
+		Env:      env,
 		Inputs:   im.inputsFor(command, dir),
 		Optional: optional,
 		Exclude:  im.pathsIgnore,

@@ -2,6 +2,8 @@ package importer
 
 import (
 	"bytes"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -18,7 +20,8 @@ func importYAML(t *testing.T, yaml string) *Result {
 	wf.Path = "ci.yml"
 	im := &importState{root: t.TempDir(), res: &Result{}, seenTool: map[string]bool{}, seenWorkflow: map[string]bool{}}
 	im.importWorkflow(wf, DefaultAssumptions())
-	dedupeNames(im.res)
+	finish(im.res)
+
 	return im.res
 }
 
@@ -31,7 +34,8 @@ func importInRepo(t *testing.T, root, yaml string) *Result {
 	wf.Path = "ci.yml"
 	im := &importState{root: root, res: &Result{}, seenTool: map[string]bool{}, seenWorkflow: map[string]bool{}}
 	im.importWorkflow(wf, DefaultAssumptions())
-	dedupeNames(im.res)
+	finish(im.res)
+
 	return im.res
 }
 
@@ -113,10 +117,27 @@ jobs:
           - go: '1.25'
             mode: slow
     steps:
-      - run: go test ./...
+      - run: go test ./... -tags ${{ matrix.go }}-${{ matrix.mode }}
 `)
 	if len(res.Checks) != 3 {
 		t.Fatalf("got %d checks, want 3 after exclude", len(res.Checks))
+	}
+
+	var got []string
+	for _, c := range res.Checks {
+		got = append(got, c.Command)
+	}
+
+	joined := strings.Join(got, "|")
+
+	for _, want := range []string{"1.25-fast", "1.26-fast", "1.26-slow"} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("leg %s is missing: %v", want, got)
+		}
+	}
+
+	if strings.Contains(joined, "1.25-slow") {
+		t.Errorf("the excluded leg survived: %v", got)
 	}
 }
 
@@ -239,16 +260,49 @@ jobs:
 
 func TestNonTriggeringWorkflowsIgnored(t *testing.T) {
 	t.Parallel()
-	res := importYAML(t, `
+
+	dir := t.TempDir()
+	wf := filepath.Join(dir, ".github", "workflows")
+
+	if err := os.MkdirAll(wf, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	write := func(name, body string) {
+		t.Helper()
+		if err := os.WriteFile(filepath.Join(wf, name), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	write("release.yml", `
 on: [release]
 jobs:
-  publish:
+  verify:
     runs-on: ubuntu-latest
     steps:
-      - run: ./publish.sh
+      - run: make check
 `)
+	write("ci.yml", `
+on: [push]
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - run: make check
+`)
+
+	res, err := ImportDir(wf, DefaultAssumptions())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(res.NotTriggered) != 1 || !strings.Contains(res.NotTriggered[0], "release") {
+		t.Errorf("the release-only workflow was not reported as untriggered: %v", res.NotTriggered)
+	}
+
 	if len(res.Checks) != 1 {
-		t.Skip("importWorkflow is unfiltered by design")
+		t.Fatalf("got %d checks, want only the one a push would run: %+v", len(res.Checks), res.Checks)
 	}
 }
 

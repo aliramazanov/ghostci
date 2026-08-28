@@ -46,9 +46,10 @@ func index(target, key any) any {
 		if i >= 0 && i < len(t) {
 			return t[i]
 		}
-	case map[string]any:
+	case Strict, map[string]any, Context:
 		return property(t, toString(key))
 	}
+
 	return nil
 }
 

@@ -1,6 +1,7 @@
 package cache
 
 import (
+	"bytes"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -495,5 +496,277 @@ func TestTheToolsOwnStateIsNotProjectContent(t *testing.T) {
 	}
 	if _, ok := everything["a.go"]; !ok {
 		t.Error("real project content went missing")
+	}
+}
+
+func TestTheCacheHidesItselfWithoutTouchingTheRepository(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	run := func(args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", args...)
+		cmd.Dir = root
+
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+
+	run("init", "-q", "-b", "main")
+	run("config", "user.email", "t@t")
+	run("config", "user.name", "t")
+
+	if err := os.WriteFile(filepath.Join(root, "a.txt"), []byte("hi\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	run("add", "-A")
+	run("commit", "-qm", "init")
+
+	store := Open(root, Mode{Read: true, Write: true})
+	store.Record("c", New(config.Check{Name: "c", Command: "true"}, map[string]string{"a.txt": "1"}, nil), 0)
+
+	status := exec.Command("git", "status", "--porcelain")
+	status.Dir = root
+	out, err := status.Output()
+
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(bytes.TrimSpace(out)) != 0 {
+		t.Errorf("the cache is visible to git:\n%s", out)
+	}
+
+	if _, err := os.Stat(filepath.Join(root, ".gitignore")); err == nil {
+		t.Error("a .gitignore was created in the repository root")
+	}
+}
+
+func TestHashingDistinguishesContent(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	a := filepath.Join(dir, "a.txt")
+	b := filepath.Join(dir, "b.txt")
+
+	if err := os.WriteFile(a, []byte("one"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := os.WriteFile(b, []byte("two"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	ha, err := hashFile(a)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	hb, err := hashFile(b)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if ha == "" {
+		t.Fatal("hashing a readable file produced nothing")
+	}
+
+	if ha == hb {
+		t.Fatalf("two files with different contents hash the same: %q", ha)
+	}
+
+	if err := os.WriteFile(b, []byte("one"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	again, err := hashFile(b)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if again != ha {
+		t.Errorf("identical contents hashed differently: %q and %q", ha, again)
+	}
+
+	if _, err := hashFile(filepath.Join(dir, "absent")); err == nil {
+		t.Error("hashing a missing file reported success")
+	}
+}
+
+func TestATreeSeesAChangeInContent(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	run := func(args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", args...)
+		cmd.Dir = dir
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+
+	path := filepath.Join(dir, "a.txt")
+	if err := os.WriteFile(path, []byte("before"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	run("init", "-q", "-b", "main")
+	run("config", "user.email", "t@t")
+	run("config", "user.name", "t")
+	run("add", "-A")
+	run("commit", "-qm", "init")
+
+	all := func(string) bool { return true }
+
+	first, err := ScanTree(git.NewSession(dir))
+	if err != nil {
+		t.Fatal(err)
+	}
+	before := first.Hashes(all)
+
+	if err := os.WriteFile(path, []byte("after"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	second, err := ScanTree(git.NewSession(dir))
+	if err != nil {
+		t.Fatal(err)
+	}
+	after := second.Hashes(all)
+
+	if before["a.txt"] == "" || after["a.txt"] == "" {
+		t.Fatalf("the file is missing from the tree: before=%q after=%q", before["a.txt"], after["a.txt"])
+	}
+	if before["a.txt"] == after["a.txt"] {
+		t.Errorf("editing the file did not change its hash: %q", after["a.txt"])
+	}
+}
+
+func TestAFingerprintHoldsOnlyWhatTheCheckWatches(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+
+	run := func(args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", args...)
+		cmd.Dir = dir
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+
+	write := func(rel, body string) {
+		t.Helper()
+		path := filepath.Join(dir, filepath.FromSlash(rel))
+
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+
+		if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	write("src/a.go", "package a\n")
+	write("docs/guide.md", "hello\n")
+
+	run("init", "-q", "-b", "main")
+	run("config", "user.email", "t@t")
+	run("config", "user.name", "t")
+	run("add", "-A")
+	run("commit", "-qm", "init")
+
+	write("src/a.go", "package a // edited\n")
+	write("docs/guide.md", "hello again\n")
+	write(Dir+"/cache/whatever.json", `{"x":1}`)
+
+	tree, err := ScanTree(git.NewSession(dir))
+
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	goOnly := tree.Hashes(func(f string) bool { return strings.HasSuffix(f, ".go") })
+
+	for p := range goOnly {
+		if strings.HasPrefix(p, Dir) {
+			t.Errorf("the fingerprint includes ghostci's own %s, so every run invalidates the last", p)
+		}
+
+		if !strings.HasSuffix(p, ".go") {
+			t.Errorf("the fingerprint includes %s, which the check does not watch", p)
+		}
+	}
+
+	if _, ok := goOnly["src/a.go"]; !ok {
+		t.Errorf("the file the check does watch is missing: %v", goOnly)
+	}
+
+	all := tree.Hashes(func(string) bool { return true })
+
+	for p := range all {
+		if strings.HasPrefix(p, Dir) {
+			t.Errorf("a check watching everything picked up %s", p)
+		}
+	}
+}
+
+func TestDiffNamesWhatActuallyChanged(t *testing.T) {
+	t.Parallel()
+
+	base := New(config.Check{
+		Name: "c", Command: "go test ./...", Dir: "sub", Shell: "bash -e",
+		Env: map[string]string{"MODE": "fast"},
+	}, map[string]string{"a.go": "1"}, map[string]string{"go": "1.26"})
+
+	for _, c := range []struct {
+		what string
+		make func() Fingerprint
+		want string
+	}{
+		{"command", func() Fingerprint {
+			f := base
+			f.Command = "go vet ./..."
+
+			return f
+		}, "command changed"},
+		{"directory", func() Fingerprint {
+			f := base
+			f.Dir = "other"
+
+			return f
+		}, "working directory changed"},
+		{"shell", func() Fingerprint {
+			f := base
+			f.Shell = "sh -e"
+
+			return f
+		}, "shell changed"},
+		{"an input", func() Fingerprint {
+			f := base
+			f.Inputs = map[string]string{"a.go": "2"}
+
+			return f
+		}, "changed: a.go"},
+		{"a toolchain", func() Fingerprint {
+			f := base
+			f.Toolchains = map[string]string{"go": "1.27"}
+
+			return f
+		}, "toolchain changed: go"},
+	} {
+		got := strings.Join(c.make().Diff(base), "; ")
+		if !strings.Contains(got, c.want) {
+			t.Errorf("changing the %s reported %q, want it to mention %q", c.what, got, c.want)
+		}
+	}
+
+	if got := base.Diff(base); len(got) != 0 {
+		t.Errorf("an identical fingerprint reported %v", got)
 	}
 }

@@ -27,6 +27,9 @@ func Dirty(dir string) ([]string, error) {
 
 		if status[0] == 'R' || status[0] == 'C' {
 			i++
+			if i < len(records) && records[i] != "" {
+				paths = append(paths, records[i])
+			}
 		}
 	}
 

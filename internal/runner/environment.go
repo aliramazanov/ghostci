@@ -3,6 +3,7 @@ package runner
 import (
 	"os"
 	"runtime"
+	"sort"
 	"strings"
 )
 
@@ -22,8 +23,8 @@ func (c Context) Env() []string {
 	})
 }
 
-func (c Context) env(alreadySet func(string) bool) []string {
-	vars := [][2]string{
+func (c Context) vars() [][2]string {
+	return [][2]string{
 		{"CI", "true"},
 		{"GITHUB_ACTIONS", "true"},
 		{"GITHUB_EVENT_NAME", "push"},
@@ -38,10 +39,30 @@ func (c Context) env(alreadySet func(string) bool) []string {
 		{"RUNNER_ARCH", runnerArch()},
 		{"RUNNER_TEMP", os.TempDir()},
 	}
+}
 
-	out := make([]string, 0, len(vars))
+func (c Context) Overridden() []string {
+	var out []string
 
-	for _, kv := range vars {
+	for _, kv := range c.vars() {
+		if kv[1] == "" {
+			continue
+		}
+
+		if got, set := os.LookupEnv(kv[0]); set && got != kv[1] {
+			out = append(out, kv[0]+"="+got+", not "+kv[1])
+		}
+	}
+
+	sort.Strings(out)
+
+	return out
+}
+
+func (c Context) env(alreadySet func(string) bool) []string {
+	out := make([]string, 0, len(c.vars()))
+
+	for _, kv := range c.vars() {
 		if kv[1] == "" || alreadySet(kv[0]) {
 			continue
 		}

@@ -160,7 +160,7 @@ func TestUnknownInputsAreNeverCached(t *testing.T) {
 		t.Fatal("a check with no inputs must not get a fingerprint")
 	}
 
-	eng.Execute(context.Background(), p, nil)
+	eng.Execute(context.Background(), p, Observer{})
 
 	if a, _ := actionOf(New(Options{Root: dir, All: true}).Plan(only), "always"); a != Run {
 		t.Error("a check with unknown inputs must run every time")
@@ -173,7 +173,7 @@ func TestCacheHitOnSecondRun(t *testing.T) {
 	only := []config.Check{{Name: "go", Command: "true", Inputs: []string{"**/*.go"}}}
 
 	eng := New(Options{Root: dir, All: true})
-	results := eng.Execute(context.Background(), eng.Plan(only), nil)
+	results := eng.Execute(context.Background(), eng.Plan(only), Observer{})
 
 	if results[0].Status != runner.StatusPassed {
 		t.Fatalf("first run: %v", results[0].Status)
@@ -191,7 +191,7 @@ func TestEditingAnInputInvalidatesTheCache(t *testing.T) {
 	only := []config.Check{{Name: "go", Command: "true", Inputs: []string{"**/*.go"}}}
 
 	eng := New(Options{Root: dir, All: true})
-	eng.Execute(context.Background(), eng.Plan(only), nil)
+	eng.Execute(context.Background(), eng.Plan(only), Observer{})
 
 	write(t, dir, "a.go", "package a\n\nfunc Changed() {}\n")
 
@@ -216,7 +216,7 @@ func TestFailuresAreNeverCached(t *testing.T) {
 	only := []config.Check{{Name: "boom", Command: "exit 1", Inputs: []string{"**/*.go"}}}
 
 	eng := New(Options{Root: dir, All: true})
-	results := eng.Execute(context.Background(), eng.Plan(only), nil)
+	results := eng.Execute(context.Background(), eng.Plan(only), Observer{})
 
 	if results[0].Status != runner.StatusFailed {
 		t.Fatalf("expected a failure, got %v", results[0].Status)
@@ -233,7 +233,7 @@ func TestNoCacheBypassesRecordedPasses(t *testing.T) {
 	only := []config.Check{{Name: "go", Command: "true", Inputs: []string{"**/*.go"}}}
 
 	eng := New(Options{Root: dir, All: true})
-	eng.Execute(context.Background(), eng.Plan(only), nil)
+	eng.Execute(context.Background(), eng.Plan(only), Observer{})
 
 	if a, _ := actionOf(New(Options{Root: dir, All: true, NoCache: true}).Plan(only), "go"); a != Run {
 		t.Error("--no-cache must ignore recorded passes")
@@ -264,7 +264,7 @@ func TestExecuteReturnsOneResultPerCheck(t *testing.T) {
 
 	eng := New(Options{Root: dir, Since: base})
 	p := eng.Plan(checks())
-	results := eng.Execute(context.Background(), p, nil)
+	results := eng.Execute(context.Background(), p, Observer{})
 
 	if len(results) != 3 {
 		t.Fatalf("got %d results for 3 checks: skipped ones must still be reported", len(results))
@@ -353,7 +353,7 @@ func TestNoCacheStillRecords(t *testing.T) {
 	only := []config.Check{{Name: "go", Command: "true", Inputs: []string{"**/*.go"}}}
 
 	bypass := New(Options{Root: dir, All: true, NoCache: true})
-	bypass.Execute(context.Background(), bypass.Plan(only), nil)
+	bypass.Execute(context.Background(), bypass.Plan(only), Observer{})
 
 	if a, _ := actionOf(New(Options{Root: dir, All: true}).Plan(only), "go"); a != Cached {
 		t.Error("a --no-cache run should still record, so the next run can hit")

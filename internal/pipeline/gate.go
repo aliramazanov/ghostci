@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"unicode/utf8"
 )
 
 type Verdict int
@@ -15,8 +16,6 @@ const (
 
 	Undecidable
 )
-
-type Gate func(event string) (bool, error)
 
 func Decide[T any](candidates []T, gate func(T) (bool, error)) (verdict Verdict, passing []T, err error) {
 	var firstErr error
@@ -60,5 +59,10 @@ func Trim(s string) string {
 		return s
 	}
 
-	return s[:57] + "..."
+	cut := 57
+	for cut > 0 && !utf8.RuneStart(s[cut]) {
+		cut--
+	}
+
+	return s[:cut] + "..."
 }

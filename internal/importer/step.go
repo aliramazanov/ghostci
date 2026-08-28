@@ -1,6 +1,7 @@
 package importer
 
 import (
+	"sort"
 	"strings"
 
 	"github.com/aliramazanov/ghostci/internal/expr"
@@ -75,7 +76,7 @@ func githubShell(shell string) string {
 	return shell
 }
 
-func mergeEnv(ctx expr.Context, layers ...workflow.Env) map[string]string {
+func mergeEnv(ctx expr.Context, layers ...workflow.Env) (env map[string]string, dropped []string) {
 	out := map[string]string{}
 
 	for _, layer := range layers {
@@ -92,6 +93,7 @@ func mergeEnv(ctx expr.Context, layers ...workflow.Env) map[string]string {
 		resolved, err := expr.Interpolate(v, ctx)
 		if err != nil {
 			delete(out, k)
+			dropped = append(dropped, k)
 
 			continue
 		}
@@ -99,9 +101,35 @@ func mergeEnv(ctx expr.Context, layers ...workflow.Env) map[string]string {
 		out[k] = resolved
 	}
 
+	sort.Strings(dropped)
+
 	if len(out) == 0 {
-		return nil
+		return nil, dropped
 	}
 
-	return out
+	return out, dropped
+}
+
+func readsAny(script string, names []string) (string, bool) {
+	for _, name := range names {
+		for _, form := range []string{"${" + name + "}", "$" + name} {
+			i := strings.Index(script, form)
+			if i < 0 {
+				continue
+			}
+
+			if after := i + len(form); form[len(form)-1] != '}' &&
+				after < len(script) && isNameByte(script[after]) {
+				continue
+			}
+
+			return name, true
+		}
+	}
+
+	return "", false
+}
+
+func isNameByte(b byte) bool {
+	return b == '_' || (b >= '0' && b <= '9') || (b >= 'a' && b <= 'z') || (b >= 'A' && b <= 'Z')
 }

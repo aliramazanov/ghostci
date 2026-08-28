@@ -98,9 +98,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Install
-        run: go install github.com/kyoh86/richgo@latest
+        run: npm ci
       - name: Test
-        run: richgo test ./...
+        run: npx richgo test ./...
       - name: Vet
         run: go vet ./...
 `)
@@ -110,12 +110,12 @@ jobs:
 	}
 
 	got := res.Checks[0]
-	for _, want := range []string{"go install", "richgo test", "go vet"} {
+	for _, want := range []string{"npm ci", "richgo test", "go vet"} {
 		if !strings.Contains(got.Command, want) {
 			t.Errorf("the merged command lost %q:\n%s", want, got.Command)
 		}
 	}
-	if !strings.HasPrefix(got.Command, "go install") {
+	if !strings.HasPrefix(got.Command, "npm ci") {
 		t.Errorf("the install must come first:\n%s", got.Command)
 	}
 
@@ -308,7 +308,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Install
-        run: go install example.com/tool@latest
+        run: npm ci
       - name: Build
         working-directory: ${{ github.workspace }}/sub
         run: go build ./...
@@ -329,7 +329,7 @@ jobs:
 	if !strings.Contains(chk.Command, "cd ./sub") && !strings.Contains(chk.Command, "cd sub") {
 		t.Errorf("command does not place the build in its own directory:\n%s", chk.Command)
 	}
-	if !strings.HasPrefix(chk.Command, "go install") {
+	if !strings.HasPrefix(chk.Command, "npm ci") {
 		t.Errorf("the install no longer runs first, at the repository root:\n%s", chk.Command)
 	}
 }

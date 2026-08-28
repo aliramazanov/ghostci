@@ -70,7 +70,7 @@ func ImportBitbucket(path string, a Assumptions) (*Result, error) {
 		im.refuse("tags/"+name, pipeline.NotAutomatic, "runs only when a tag is pushed")
 	}
 
-	dedupeNames(im.res)
+	finish(im.res)
 
 	return im.res, nil
 }

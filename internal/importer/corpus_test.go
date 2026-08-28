@@ -34,7 +34,7 @@ func TestCorpusExtractionRate(t *testing.T) {
 		runSteps += n
 	}
 
-	if files < 90 || runSteps < 500 {
+	if files < 120 || runSteps < 600 {
 		t.Fatalf("corpus too small to mean anything: %d files, %d run steps", files, runSteps)
 	}
 

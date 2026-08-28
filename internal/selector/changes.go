@@ -1,6 +1,7 @@
 package selector
 
 import (
+	"sort"
 	"strings"
 
 	"github.com/aliramazanov/ghostci/internal/git"
@@ -87,17 +88,22 @@ func isRemoteTracking(sess *git.Session, ref string) bool {
 
 func defaultBranches(sess *git.Session) []string {
 	var out []string
+
 	if ref, err := sess.OriginHead(); err == nil && ref != "" {
 		out = append(out, strings.TrimPrefix(ref, "refs/remotes/"))
 	}
+
 	return append(out, "origin/main", "origin/master", "main", "master")
 }
 
 func paths(m map[string]bool) []string {
 	out := make([]string, 0, len(m))
+
 	for k := range m {
 		out = append(out, k)
 	}
+
+	sort.Strings(out)
 
 	return out
 }

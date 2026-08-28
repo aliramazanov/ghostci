@@ -4,6 +4,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"unicode/utf8"
 )
 
 func TestUndecidableOutranksFalse(t *testing.T) {
@@ -161,5 +162,19 @@ func TestCombinationMatchesPartially(t *testing.T) {
 	}
 	if !c.Matches(Combination{"go": 1.22}) && !c.Matches(Combination{"go": "1.22"}) {
 		t.Error("values spelled as different YAML types should still compare")
+	}
+}
+
+func TestTrimCutsOnRuneBoundaries(t *testing.T) {
+	t.Parallel()
+
+	for _, r := range []string{"é", "🙂", "日", "a"} {
+		got := Trim(strings.Repeat(r, 60))
+		if !utf8.ValidString(got) {
+			t.Errorf("Trim of %q characters produced invalid UTF-8: %q", r, got)
+		}
+		if len(got) > 60 {
+			t.Errorf("Trim of %q returned %d bytes, want at most 60", r, len(got))
+		}
 	}
 }

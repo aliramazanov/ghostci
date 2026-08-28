@@ -37,6 +37,8 @@ type File struct {
 	Templates map[string]Job
 
 	Inputs map[string]SpecInput
+
+	Unreadable []JobError
 }
 
 type Default struct {
@@ -49,8 +51,13 @@ type Default struct {
 }
 
 type Workflow struct {
-	Rules []Rule `yaml:"rules"`
+	Rules Rules  `yaml:"rules"`
 	Name  string `yaml:"name"`
+}
+
+type JobError struct {
+	Name string
+	Err  error
 }
 
 type NamedJob struct {
@@ -64,7 +71,7 @@ type Job struct {
 	BeforeScript Script    `yaml:"before_script"`
 	AfterScript  Script    `yaml:"after_script"`
 	Variables    Variables `yaml:"variables"`
-	Rules        []Rule    `yaml:"rules"`
+	Rules        Rules     `yaml:"rules"`
 	Extends      Strings   `yaml:"extends"`
 	Image        yaml.Node `yaml:"image"`
 	Services     yaml.Node `yaml:"services"`
@@ -82,6 +89,64 @@ type Job struct {
 	Artifacts    yaml.Node `yaml:"artifacts"`
 	Cache        yaml.Node `yaml:"cache"`
 	Environment  yaml.Node `yaml:"environment"`
+}
+
+type Rules []Rule
+
+func (r *Rules) UnmarshalYAML(node *yaml.Node) error {
+	node = resolveAlias(node)
+
+	if node.Kind != yaml.SequenceNode {
+		return fmt.Errorf("rules must be a list, found %s", kindName(node.Kind))
+	}
+
+	var out Rules
+
+	for _, item := range node.Content {
+		item = resolveAlias(item)
+
+		switch item.Kind {
+		case yaml.SequenceNode:
+			var nested Rules
+			if err := item.Decode(&nested); err != nil {
+				return err
+			}
+
+			out = append(out, nested...)
+		case yaml.MappingNode:
+			var one Rule
+			if err := item.Decode(&one); err != nil {
+				return err
+			}
+
+			out = append(out, one)
+		}
+	}
+
+	*r = out
+
+	return nil
+}
+
+func resolveAlias(node *yaml.Node) *yaml.Node {
+	for node != nil && node.Kind == yaml.AliasNode && node.Alias != nil {
+		node = node.Alias
+	}
+
+	return node
+}
+
+func kindName(k yaml.Kind) string {
+	switch k {
+	case yaml.MappingNode:
+		return "a mapping"
+	case yaml.ScalarNode:
+		return "a single value"
+	case yaml.AliasNode:
+		return "an alias"
+	}
+
+	return "something else"
 }
 
 type Rule struct {
@@ -291,7 +356,8 @@ func Parse(data []byte) (*File, error) {
 			}
 			var job Job
 			if err := val.Decode(&job); err != nil {
-				return nil, fmt.Errorf("gitlab: job %q: %w", key, err)
+				f.Unreadable = append(f.Unreadable, JobError{Name: key, Err: err})
+				continue
 			}
 			f.Jobs = append(f.Jobs, NamedJob{Name: key, Job: job})
 		}

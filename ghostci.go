@@ -214,11 +214,6 @@ func action(a engine.Action) string {
 	return "unknown"
 }
 
-// Run plans and executes the checks in configPath, returning one Result per
-// check, including the ones that were skipped or served from cache.
-//
-// Cancelling ctx stops the run; the checks already finished keep their
-// results and the rest report [StatusCancelled], which is not a pass.
 func Run(ctx context.Context, configPath string, opts Options) ([]Result, error) {
 	checks, err := Load(configPath)
 	if err != nil {
@@ -227,10 +222,7 @@ func Run(ctx context.Context, configPath string, opts Options) ([]Result, error)
 
 	eng := engine.New(opts)
 
-	return eng.Execute(ctx, eng.Plan(checks), nil), nil
+	return eng.Execute(ctx, eng.Plan(checks), engine.Observer{}), nil
 }
 
-// Failed reports whether the run should fail the push. A check marked
-// optional is reported but ignored, matching continue-on-error in the
-// workflow it came from.
 func Failed(results []Result) bool { return engine.Failed(results) }

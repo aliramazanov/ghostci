@@ -37,6 +37,8 @@ type Engine struct {
 
 func (e *Engine) WatchingNothing() []string { return e.watchingNothing }
 
+func (e *Engine) OverriddenContext() []string { return e.context().Overridden() }
+
 func New(opts Options) *Engine {
 	if opts.Root == "" {
 		opts.Root = "."
@@ -118,7 +120,12 @@ func (e *Engine) scanTree() *cache.Tree {
 	return tree
 }
 
-func (e *Engine) Execute(ctx context.Context, p Plan, onResult func(runner.Result)) []runner.Result {
+type Observer struct {
+	OnStart  func(name string)
+	OnResult func(runner.Result)
+}
+
+func (e *Engine) Execute(ctx context.Context, p Plan, obs Observer) []runner.Result {
 	toRun := p.Checks()
 
 	if len(toRun) == 0 {
@@ -133,7 +140,8 @@ func (e *Engine) Execute(ctx context.Context, p Plan, onResult func(runner.Resul
 		FailFast: e.opts.FailFast,
 		Timeout:  e.opts.Timeout,
 		Context:  e.context(),
-		OnResult: onResult,
+		OnStart:  obs.OnStart,
+		OnResult: obs.OnResult,
 	})
 
 	e.record(p, results)

@@ -2,6 +2,7 @@ package importer
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/aliramazanov/ghostci/internal/pipeline"
@@ -62,6 +63,77 @@ func slug(s string) string {
 		return "step"
 	}
 	return out
+}
+
+func finish(res *Result) {
+	collapseIdentical(res)
+	dedupeNames(res)
+}
+
+func collapseIdentical(res *Result) {
+	type identity struct {
+		command, dir, shell, env, inputs, exclude string
+		optional, serial                          bool
+		timeout                                   config.Duration
+	}
+
+	key := func(c config.Check) identity {
+		names := make([]string, 0, len(c.Env))
+
+		for k := range c.Env {
+			names = append(names, k)
+		}
+
+		sort.Strings(names)
+
+		var env strings.Builder
+
+		for _, k := range names {
+			env.WriteString(k)
+			env.WriteString("=")
+			env.WriteString(c.Env[k])
+			env.WriteString("\x00")
+		}
+
+		return identity{
+			command: c.Command, dir: c.Dir, shell: c.Shell,
+			env:      env.String(),
+			inputs:   strings.Join(c.Inputs, "\x00"),
+			exclude:  strings.Join(c.Exclude, "\x00"),
+			optional: c.Optional, serial: c.Serial, timeout: c.Timeout,
+		}
+	}
+
+	collapse := func(checks []config.Check) ([]config.Check, int) {
+		seen := map[identity]bool{}
+		out := checks[:0:0]
+		dropped := 0
+
+		for _, c := range checks {
+			k := key(c)
+			if seen[k] {
+				dropped++
+
+				continue
+			}
+
+			seen[k] = true
+			out = append(out, c)
+		}
+
+		return out, dropped
+	}
+
+	checks, dropped := collapse(res.Checks)
+	heavy, heavyDropped := collapse(res.Heavy)
+
+	res.Checks, res.Heavy = checks, heavy
+	dropped += heavyDropped
+
+	if dropped > 0 {
+		res.Warnings = append(res.Warnings, fmt.Sprintf(
+			"%d matrix legs run a command already listed here, so one of each is kept", dropped))
+	}
 }
 
 func dedupeNames(res *Result) {

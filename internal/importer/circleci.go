@@ -78,7 +78,7 @@ func ImportCircle(path string, a Assumptions) (*Result, error) {
 		im.importJob(name, cfg.Jobs[name])
 	}
 
-	dedupeNames(im.res)
+	finish(im.res)
 
 	return im.res, nil
 }

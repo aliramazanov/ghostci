@@ -94,3 +94,34 @@ func TestCommandCarriesContext(t *testing.T) {
 		t.Error("the ambient environment was dropped")
 	}
 }
+
+func TestOverriddenNamesWhatTheEnvironmentChanged(t *testing.T) {
+	t.Setenv("GITHUB_REF", "refs/heads/stale")
+	t.Setenv("CI", "true")
+
+	got := Context{Ref: "refs/heads/main", RefName: "main"}.Overridden()
+
+	if len(got) != 1 {
+		t.Fatalf("reported %v, want only the ref that differs", got)
+	}
+
+	if !strings.Contains(got[0], "GITHUB_REF") || !strings.Contains(got[0], "refs/heads/stale") {
+		t.Errorf("the report does not say what the environment set: %q", got[0])
+	}
+
+	if !strings.Contains(got[0], "refs/heads/main") {
+		t.Errorf("the report does not say what it would have been: %q", got[0])
+	}
+}
+
+func TestOverriddenIsSilentWhenNothingDiffers(t *testing.T) {
+	t.Setenv("GITHUB_REF", "refs/heads/main")
+
+	if got := (Context{Ref: "refs/heads/main"}).Overridden(); len(got) != 0 {
+		t.Errorf("reported %v for a matching value", got)
+	}
+
+	if got := (Context{}).Overridden(); len(got) != 0 {
+		t.Errorf("reported %v with nothing worked out to compare against", got)
+	}
+}

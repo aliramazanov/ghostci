@@ -197,3 +197,26 @@ func TestBrokenGlobBiasesTowardRunning(t *testing.T) {
 		t.Error("a broken exclusion excluded a real input")
 	}
 }
+
+func TestTheReportedChangeIsStable(t *testing.T) {
+	t.Parallel()
+
+	files := map[string]bool{}
+	for _, f := range []string{"h.go", "b.go", "e.go", "a.go", "g.go", "c.go", "d.go", "f.go"} {
+		files[f] = true
+	}
+
+	first := paths(files)
+	for i := 0; i < 200; i++ {
+		got := paths(files)
+		for j := range got {
+			if got[j] != first[j] {
+				t.Fatalf("run %d gave %v, the first gave %v", i, got, first)
+			}
+		}
+	}
+
+	if first[0] != "a.go" {
+		t.Errorf("first changed file is %q, want the order to be sorted", first[0])
+	}
+}

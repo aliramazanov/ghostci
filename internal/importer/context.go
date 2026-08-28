@@ -109,14 +109,15 @@ func gateReason(cond string, err error) string {
 }
 
 func interpolateReason(run string, err error) string {
-	var ue *expr.UndecidableError
-	if errors.As(err, &ue) {
+	if ue, ok := errors.AsType[*expr.UndecidableError](err); ok {
 		return fmt.Sprintf("command %s", ue.Error())
 	}
+
 	refs := expr.References(run)
 	if len(refs) > 0 {
 		return fmt.Sprintf("command uses ${{ }} referencing %s: %v", strings.Join(refs, ", "), err)
 	}
+
 	return fmt.Sprintf("command expression could not be resolved: %v", err)
 }
 
@@ -140,6 +141,22 @@ func refType(ref string) string {
 	}
 
 	return ""
+}
+
+func eventPayload(event string) map[string]any {
+	if event != "push" {
+		return map[string]any{}
+	}
+
+	absent := map[string]any{}
+	for _, name := range []string{
+		"action", "number", "label", "pull_request", "issue", "comment", "review",
+		"requested_reviewer", "milestone", "changes", "release", "workflow_run",
+	} {
+		absent[name] = nil
+	}
+
+	return absent
 }
 
 func shortRef(ref string) string {
@@ -170,7 +187,7 @@ func buildContext(a Assumptions, event, runnerOS string, combo workflow.Combinat
 		"api_url":             "https://api.github.com",
 		"graphql_url":         "https://api.github.com/graphql",
 		"workspace":           ".",
-		"event":               map[string]any{},
+		"event":               expr.Strict{Name: "github.event", Values: eventPayload(event)},
 		"actor":               "local",
 		"head_ref":            "",
 		"base_ref":            "",

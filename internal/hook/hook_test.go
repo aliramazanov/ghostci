@@ -165,11 +165,6 @@ func TestRespectsCoreHooksPath(t *testing.T) {
 	}
 }
 
-// realPath resolves the symlinks in a path so two spellings of the same
-// directory compare equal. git answers with the resolved form, while a test
-// building a path from t.TempDir() gets the unresolved one, and on macOS those
-// differ: /var is a symlink to /private/var. Only the existing part can be
-// resolved, so a leaf that has not been created yet is kept as written.
 func realPath(path string) string {
 	if p, err := filepath.EvalSymlinks(path); err == nil {
 		return p
@@ -328,15 +323,12 @@ func TestHookVerboseSwitch(t *testing.T) {
 	}
 }
 
-// macOS reaches every temporary directory through /var, a symlink to
-// /private/var, so a path built from t.TempDir() and the one git reports name
-// the same directory in two spellings. That cannot be reproduced on Linux, but
-// a symlink to a real directory can, and it is the same comparison.
 func TestRealPathComparesTwoSpellingsOfOneDirectory(t *testing.T) {
 	t.Parallel()
 
 	real := t.TempDir()
 	link := filepath.Join(t.TempDir(), "link")
+
 	if err := os.Symlink(real, link); err != nil {
 		t.Skipf("symlinks unavailable: %v", err)
 	}
@@ -345,10 +337,9 @@ func TestRealPathComparesTwoSpellingsOfOneDirectory(t *testing.T) {
 		t.Errorf("realPath(%q) = %q, want the same directory as %q", link, realPath(link), realPath(real))
 	}
 
-	// A leaf that does not exist yet still has to compare equal, which is the
-	// case that failed in CI: the hooks directory is named before it is made.
 	viaLink := realPath(filepath.Join(link, "hooks"))
 	direct := realPath(filepath.Join(real, "hooks"))
+
 	if viaLink != direct {
 		t.Errorf("realPath = %q via the link and %q directly", viaLink, direct)
 	}

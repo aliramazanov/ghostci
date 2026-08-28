@@ -146,7 +146,7 @@ func ImportAzure(path string, a Assumptions) (*Result, error) {
 		im.walkJobs(stage.Stage, stage.Jobs, file.Variables)
 	}
 
-	dedupeNames(im.res)
+	finish(im.res)
 
 	return im.res, nil
 }

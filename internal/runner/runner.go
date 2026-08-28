@@ -29,8 +29,10 @@ type Options struct {
 	OutputLimit int
 	Shell       string
 	Context     Context
-	OnResult    func(Result)
-	Executor    Executor
+
+	OnStart  func(name string)
+	OnResult func(Result)
+	Executor Executor
 }
 
 func (o *Options) applyDefaults() {
@@ -62,11 +64,20 @@ func Run(ctx context.Context, checks []config.Check, opts Options) []Result {
 
 	var serial sync.Mutex
 
+	same := newCommandLocks()
+
 	for i, chk := range checks {
 		g.Go(func() error {
 			if chk.Serial {
 				serial.Lock()
 				defer serial.Unlock()
+			}
+
+			release := same.hold(chk)
+			defer release()
+
+			if opts.OnStart != nil {
+				opts.OnStart(chk.Name)
 			}
 
 			res := runOne(gctx, i, chk, opts)
@@ -165,13 +176,6 @@ func checkTimeout(chk config.Check, opts Options) time.Duration {
 	return opts.Timeout
 }
 
-// unrunnable reports a command the operating system will not execute at all,
-// which is not a failing check: nothing about the code was tested. Shells
-// disagree on the status they return for it, and macOS returned neither of the
-// two this once relied on, so the case is settled before a shell is involved.
-//
-// Only a command that is a single path is answered here. Anything longer is
-// left to the shell, whose 126 and 127 still classify the common cases.
 func unrunnable(command, dir string) (string, bool) {
 	fields := strings.Fields(strings.TrimSpace(command))
 	if len(fields) != 1 || !strings.ContainsAny(fields[0], `/\`) {
@@ -191,9 +195,6 @@ func unrunnable(command, dir string) (string, bool) {
 	return fields[0] + " is not executable", true
 }
 
-// exitCode reports what the shell returned. Anything that did not reach an
-// exit of its own is -1 rather than 0, so a check that never ran is never
-// mistaken for one that succeeded.
 func exitCode(err error) int {
 	if err == nil {
 		return 0
@@ -249,4 +250,29 @@ func env(declared map[string]string, layers ...[]string) []string {
 	}
 
 	return append(out, Disable+"=0")
+}
+
+type commandLocks struct {
+	mu    sync.Mutex
+	locks map[string]*sync.Mutex
+}
+
+func newCommandLocks() *commandLocks {
+	return &commandLocks{locks: map[string]*sync.Mutex{}}
+}
+
+func (c *commandLocks) hold(chk config.Check) (release func()) {
+	key := chk.Dir + "\x00" + chk.Command
+
+	c.mu.Lock()
+	lock, ok := c.locks[key]
+	if !ok {
+		lock = &sync.Mutex{}
+		c.locks[key] = lock
+	}
+	c.mu.Unlock()
+
+	lock.Lock()
+
+	return lock.Unlock
 }

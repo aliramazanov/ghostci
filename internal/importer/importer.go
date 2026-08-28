@@ -69,7 +69,7 @@ func ImportDir(dir string, a Assumptions) (*Result, error) {
 		}
 		im.importWorkflow(wf, a)
 	}
-	dedupeNames(im.res)
+	finish(im.res)
 	return im.res, nil
 }
 
@@ -85,7 +85,7 @@ func ImportFile(path string, a Assumptions) (*Result, error) {
 		seenWorkflow: map[string]bool{},
 	}
 	im.importWorkflow(wf, a)
-	dedupeNames(im.res)
+	finish(im.res)
 	return im.res, nil
 }
 

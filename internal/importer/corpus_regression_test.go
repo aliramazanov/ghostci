@@ -21,7 +21,7 @@ jobs:
       matrix:
         v: [1, 2]
     steps:
-      - run: echo test
+      - run: echo test ${{ matrix.v }}
 `)
 	if len(res.Checks) != 2 {
 		t.Fatalf("got %d checks, want one per matrix leg: %+v", len(res.Checks), res.Checks)

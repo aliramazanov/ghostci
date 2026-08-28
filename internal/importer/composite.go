@@ -18,6 +18,12 @@ type site struct {
 	matrix   string
 }
 
+func compositeEnv(ctx expr.Context, env workflow.Env) map[string]string {
+	out, _ := mergeEnv(ctx, env)
+
+	return out
+}
+
 func (s site) with(action string) site {
 	s.job += "/" + action
 	return s
@@ -129,7 +135,7 @@ func (im *importState) compositeRunStep(sub workflow.Step, i int, at site, ctx e
 		Command: command,
 		Dir:     sub.WorkingDirectory,
 		Shell:   normaliseShell(sub.Shell),
-		Env:     mergeEnv(ctx, sub.Env),
+		Env:     compositeEnv(ctx, sub.Env),
 		Inputs:  inferInputs(command),
 	}
 	e := at.entry(sub, i, Extracted, "")

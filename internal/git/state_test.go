@@ -142,3 +142,52 @@ func TestChangedReportsFailureRatherThanNoChanges(t *testing.T) {
 		t.Fatal("a ref beginning with - reached git as an option and wrote a file")
 	}
 }
+
+func TestARenameReportsBothPaths(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+
+	run := func(args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", args...)
+		cmd.Dir = dir
+
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+
+	run("init", "-q", "-b", "main")
+	run("config", "user.email", "t@t")
+	run("config", "user.name", "t")
+
+	if err := os.MkdirAll(filepath.Join(dir, "src"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := os.WriteFile(filepath.Join(dir, "src", "a.go"), []byte("package a\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	run("add", "-A")
+	run("commit", "-qm", "init")
+	run("mv", "src/a.go", "src/b.go")
+
+	got, err := Dirty(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	seen := map[string]bool{}
+	for _, p := range got {
+		seen[p] = true
+	}
+
+	if !seen["src/b.go"] {
+		t.Errorf("the new path is missing from %v", got)
+	}
+	if !seen["src/a.go"] {
+		t.Errorf("the old path is missing from %v, so a check watching it would be skipped", got)
+	}
+}

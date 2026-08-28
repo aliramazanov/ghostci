@@ -2,6 +2,7 @@ package report
 
 import (
 	"bytes"
+	"encoding/json"
 	"strings"
 	"testing"
 	"time"
@@ -137,6 +138,65 @@ func TestDurationFormat(t *testing.T) {
 	for in, want := range tests {
 		if got := dur(in); got != want {
 			t.Errorf("dur(%v) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+func TestJSONCarriesTheExitCode(t *testing.T) {
+	t.Parallel()
+
+	var buf bytes.Buffer
+	err := JSON(&buf, []runner.Result{
+		{Index: 0, Name: "ok", Status: runner.StatusPassed, ExitCode: 0},
+		{Index: 1, Name: "bad", Status: runner.StatusFailed, ExitCode: 7},
+		{Index: 2, Name: "skipped", Status: runner.StatusSkipped, ExitCode: -1},
+	}, time.Second, Verdict{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var got struct {
+		Checks []struct {
+			Name     string `json:"name"`
+			ExitCode *int   `json:"exit_code"`
+		} `json:"checks"`
+	}
+	if err := json.Unmarshal(buf.Bytes(), &got); err != nil {
+		t.Fatalf("invalid JSON: %v", err)
+	}
+
+	by := map[string]*int{}
+	for _, c := range got.Checks {
+		by[c.Name] = c.ExitCode
+	}
+
+	if by["ok"] == nil || *by["ok"] != 0 {
+		t.Errorf("passed check: exit_code = %v, want 0", by["ok"])
+	}
+	if by["bad"] == nil || *by["bad"] != 7 {
+		t.Errorf("failed check: exit_code = %v, want 7", by["bad"])
+	}
+	if by["skipped"] != nil {
+		t.Errorf("skipped check: exit_code = %v, want absent", *by["skipped"])
+	}
+}
+
+func TestNeedsAttentionCoversEveryWarning(t *testing.T) {
+	t.Parallel()
+
+	if (Verdict{}).NeedsAttention() {
+		t.Error("a clean run wants attention")
+	}
+
+	for name, v := range map[string]Verdict{
+		"interrupted":      {Interrupted: true},
+		"stale":            {Stale: []string{"a"}},
+		"could not run":    {Unavailable: []string{"a"}},
+		"watching nothing": {WatchingNothing: []string{"a"}},
+		"overridden env":   {Overridden: []string{"GITHUB_REF=x, not y"}},
+	} {
+		if !v.NeedsAttention() {
+			t.Errorf("%s would be swallowed by quiet mode", name)
 		}
 	}
 }

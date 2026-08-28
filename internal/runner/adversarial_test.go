@@ -191,9 +191,6 @@ func openDescriptors(t *testing.T) int {
 }
 
 func TestAMissingToolIsNotAFailingCheck(t *testing.T) {
-	// A file this test creates, rather than one the operating system happens
-	// to provide: /etc/hostname exists on Linux and not on macOS, so the case
-	// it was meant to cover was never the case being run.
 	notExecutable := filepath.Join(t.TempDir(), "not-executable")
 	if err := os.WriteFile(notExecutable, []byte("data, not a program\n"), 0o644); err != nil {
 		t.Fatal(err)
@@ -243,10 +240,6 @@ func TestAMissingWorkingDirectoryIsNamed(t *testing.T) {
 	}
 }
 
-// A file the operating system will not execute is settled before any shell
-// runs, because shells disagree on the status they return for it: Linux bash
-// reports 126, and macOS reported neither 126 nor 127, so the same repository
-// gave a different verdict on the two platforms.
 func TestANonExecutableFileIsUnavailableOnEveryPlatform(t *testing.T) {
 	t.Parallel()
 
@@ -260,21 +253,21 @@ func TestANonExecutableFileIsUnavailableOnEveryPlatform(t *testing.T) {
 	if res[0].Status != StatusUnavailable {
 		t.Errorf("absolute path: got %v (exit %d), want unavailable", res[0].Status, res[0].ExitCode)
 	}
+
 	if !strings.Contains(res[0].Output, "not executable") {
 		t.Errorf("the reason does not say why: %q", res[0].Output)
 	}
 
-	// The same file relative to the check's directory.
 	rel := Run(context.Background(),
 		[]config.Check{{Name: "relative", Command: "./build.sh", Dir: dir}}, Options{Root: dir})
 	if rel[0].Status != StatusUnavailable {
 		t.Errorf("relative path: got %v (exit %d), want unavailable", rel[0].Status, rel[0].ExitCode)
 	}
 
-	// Once it can be executed it is an ordinary check again.
 	if err := os.Chmod(path, 0o755); err != nil {
 		t.Fatal(err)
 	}
+
 	ok := Run(context.Background(), []config.Check{{Name: "now-executable", Command: path}}, Options{})
 	if ok[0].Status != StatusPassed {
 		t.Errorf("after chmod: got %v (exit %d), want passed\noutput: %s",

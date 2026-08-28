@@ -54,7 +54,7 @@ func ImportGitLab(path string, a Assumptions) (*Result, error) {
 	im.seenFile[filepath.Clean(path)] = true
 
 	im.importFile(file, filepath.Base(path))
-	dedupeNames(im.res)
+	finish(im.res)
 
 	return im.res, nil
 }
@@ -98,6 +98,11 @@ func (im *gitlabImport) collect(file *gitlab.File, label string) {
 	im.followIncludes(file, label)
 
 	im.scope.Files = append(im.scope.Files, file)
+
+	for _, bad := range file.Unreadable {
+		im.refuse(label, bad.Name, pipeline.Unreadable,
+			"the job definition could not be read: "+pipeline.Trim(bad.Err.Error()))
+	}
 
 	for _, nj := range file.Jobs {
 		im.pending = append(im.pending, pendingJob{

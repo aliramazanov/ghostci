@@ -104,6 +104,26 @@ A tool that says "all clear" when CI would have failed is worse than no tool. So
 - If a check **rewrites files** another check depends on, the run is not an all clear: what passed no longer describes your tree.
 - Interrupting a run (Ctrl-C) is **never** an all clear.
 - `ghostci --explain` prints why every check ran, was cached, or was skipped.
+- A check still running after ten seconds **says so**, and keeps saying so, so
+  a slow check is never mistaken for a hung one.
+- `ghostci --quiet` says nothing while everything passes, and everything when
+  it does not. A failure, an interruption, a check that verified nothing or
+  watched nothing, and a CI variable your shell overrode all survive it.
+
+Each of those is held by a test that fails when it stops being true, and the
+ones that matter most are checked against the whole corpus of real workflows
+rather than a fixture:
+
+- **No runnable check carries an unexpanded placeholder** from any provider, in
+  its command, directory, inputs or environment.
+- **No runnable check does anything outward-facing** by default: pushing,
+  publishing, deploying, installing into the machine, or needing root.
+- **Importing the same tree twice gives the same answer**, so an explanation
+  does not change between two runs of an unchanged repository.
+- **Text that reaches a config or a report stays valid UTF-8**, whatever it was
+  cut from. Fuzzed in CI rather than left to a remembered example.
+- **The helper the tests import through does what the real entry point does**,
+  so a change cannot pass its tests on a path nobody runs.
 
 ```console
 $ ghostci --explain

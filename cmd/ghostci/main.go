@@ -57,5 +57,11 @@ usage:
   ghostci version      print the version
 
 run "ghostci <command> -h" for the flags of each command.
+
+flags for the run above:
 `)
+
+	fs := runFlagSet(&options{})
+	fs.SetOutput(os.Stderr)
+	fs.PrintDefaults()
 }

@@ -79,6 +79,8 @@ func (s *Store) Record(name string, fp Fingerprint, took time.Duration) {
 		return
 	}
 
+	hideFromGit(filepath.Dir(s.dir))
+
 	body, err := json.MarshalIndent(record{
 		Name:        name,
 		RecordedAt:  time.Now(),
@@ -101,16 +103,11 @@ func (s *Store) Record(name string, fp Fingerprint, took time.Duration) {
 		return
 	}
 
-	defer func() {
-		if err := os.Remove(tmp.Name()); err != nil && !os.IsNotExist(err) {
-			return
-		}
-	}()
+	defer func() { _ = os.Remove(tmp.Name()) }()
 
 	if _, err := tmp.Write(body); err != nil {
-		if cerr := tmp.Close(); cerr != nil {
-			return
-		}
+		_ = tmp.Close()
+
 		return
 	}
 
@@ -182,4 +179,14 @@ func (s *Store) index() map[string]record {
 	}
 
 	return out
+}
+
+func hideFromGit(dir string) {
+	path := filepath.Join(dir, ".gitignore")
+
+	if _, err := os.Stat(path); err == nil {
+		return
+	}
+
+	_ = os.WriteFile(path, []byte("*\n"), 0o644)
 }

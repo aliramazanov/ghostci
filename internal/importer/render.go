@@ -151,8 +151,8 @@ func (r *Result) writeHeavy(w io.Writer) error {
 	if len(r.Heavy) == 0 {
 		return nil
 	}
-	fmt.Fprintf(w, "\n# Long-running CI work, not enabled by default.\n")
-	fmt.Fprintf(w, "# These are things CI really does. Uncomment any you want checked before a push.\n")
+	fmt.Fprintf(w, "\n# CI work that is slow, or that changes something outside this machine.\n")
+	fmt.Fprintf(w, "# Never run unless you uncomment it. Read the reason on each before you do.\n")
 
 	for _, c := range r.Heavy {
 		body, err := yaml.Marshal([]config.Check{c})

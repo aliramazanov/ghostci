@@ -27,7 +27,17 @@ type Verdict struct {
 
 	WatchingNothing []string
 
+	Overridden []string
+
 	Stale []string
+}
+
+func (v Verdict) NeedsAttention() bool {
+	return v.Interrupted ||
+		len(v.Stale) > 0 ||
+		len(v.Unavailable) > 0 ||
+		len(v.WatchingNothing) > 0 ||
+		len(v.Overridden) > 0
 }
 
 func Summary(w io.Writer, results []runner.Result, elapsed time.Duration, v Verdict) {
@@ -84,6 +94,19 @@ func Summary(w io.Writer, results []runner.Result, elapsed time.Duration, v Verd
 
 		fmt.Fprintf(w, "\n  warning: %s %s no file here, so %s never run.\n",
 			namedChecks(v.WatchingNothing), verb, subject)
+	}
+
+	if len(v.Overridden) > 0 {
+		subject := "this variable"
+		if len(v.Overridden) > 1 {
+			subject = "these variables"
+		}
+
+		fmt.Fprintf(w, "\n  warning: your environment already sets %s.\n", subject)
+		for _, line := range v.Overridden {
+			fmt.Fprintf(w, "    %s\n", line)
+		}
+		fmt.Fprintf(w, "  checks saw those values, not the ones for this tree.\n")
 	}
 
 	switch {
