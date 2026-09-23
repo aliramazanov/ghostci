@@ -23,6 +23,8 @@ const (
 	FingerprintChanged
 
 	NeverPassed
+
+	WatchesNothing
 )
 
 type Reason struct {
@@ -62,6 +64,8 @@ func (r Reason) String() string {
 		return strings.Join(r.Diffs, "; ")
 	case NeverPassed:
 		return "no previous passing run"
+	case WatchesNothing:
+		return "its inputs match no file here, so nothing can show it is unaffected"
 	}
 
 	return fmt.Sprintf("unknown reason %d", r.Kind)

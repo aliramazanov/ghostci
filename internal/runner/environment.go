@@ -37,7 +37,6 @@ func (c Context) vars() [][2]string {
 		{"GITHUB_WORKSPACE", c.Workspace},
 		{"RUNNER_OS", runnerOS()},
 		{"RUNNER_ARCH", runnerArch()},
-		{"RUNNER_TEMP", os.TempDir()},
 	}
 }
 
@@ -60,9 +59,10 @@ func (c Context) Overridden() []string {
 }
 
 func (c Context) env(alreadySet func(string) bool) []string {
-	out := make([]string, 0, len(c.vars()))
+	vars := append(c.vars(), [2]string{"RUNNER_TEMP", os.TempDir()})
+	out := make([]string, 0, len(vars))
 
-	for _, kv := range c.vars() {
+	for _, kv := range vars {
 		if kv[1] == "" || alreadySet(kv[0]) {
 			continue
 		}

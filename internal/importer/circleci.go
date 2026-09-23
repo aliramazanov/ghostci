@@ -180,7 +180,7 @@ func (im *circleImport) importStep(job string, index int, node yaml.Node, jobEnv
 		Dir:     run.WorkingDirectory,
 		Shell:   shell,
 		Env:     mergeStringMaps(jobEnv, run.Environment),
-		Inputs:  inferInputs(run.Command),
+		Inputs:  inferInputsIn("", run.WorkingDirectory, run.Command),
 	}
 
 	entry := Entry{

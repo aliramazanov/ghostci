@@ -21,11 +21,11 @@ if [ -n "$GHOSTCI_BIN" ] && [ -x "$GHOSTCI_BIN" ]; then
 	exec "$GHOSTCI_BIN" --hook "$@"
 elif command -v ghostci >/dev/null 2>&1; then
 	exec ghostci --hook "$@"
-elif [ -x "{{.Binary}}" ]; then
-	exec "{{.Binary}}" --hook "$@"
+elif [ -x {{.Binary}} ]; then
+	exec {{.Binary}} --hook "$@"
 fi
 
 cat >/dev/null
-echo "ghostci: not found on PATH and {{.Binary}} is gone; NO CHECKS RAN" >&2
+echo "ghostci: not found on PATH and "{{.Binary}}" is gone; NO CHECKS RAN" >&2
 echo "ghostci: set GHOSTCI_BIN, or reinstall the hook with: ghostci install-hook" >&2
 exit 0

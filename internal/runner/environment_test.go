@@ -95,7 +95,17 @@ func TestCommandCarriesContext(t *testing.T) {
 	}
 }
 
+func withoutContext(t *testing.T) {
+	t.Helper()
+
+	for _, kv := range (Context{}).vars() {
+		t.Setenv(kv[0], "")
+		os.Unsetenv(kv[0])
+	}
+}
+
 func TestOverriddenNamesWhatTheEnvironmentChanged(t *testing.T) {
+	withoutContext(t)
 	t.Setenv("GITHUB_REF", "refs/heads/stale")
 	t.Setenv("CI", "true")
 
@@ -115,6 +125,7 @@ func TestOverriddenNamesWhatTheEnvironmentChanged(t *testing.T) {
 }
 
 func TestOverriddenIsSilentWhenNothingDiffers(t *testing.T) {
+	withoutContext(t)
 	t.Setenv("GITHUB_REF", "refs/heads/main")
 
 	if got := (Context{Ref: "refs/heads/main"}).Overridden(); len(got) != 0 {
@@ -123,5 +134,20 @@ func TestOverriddenIsSilentWhenNothingDiffers(t *testing.T) {
 
 	if got := (Context{}).Overridden(); len(got) != 0 {
 		t.Errorf("reported %v with nothing worked out to compare against", got)
+	}
+}
+
+func TestAScratchPathIsNotAnOverride(t *testing.T) {
+	withoutContext(t)
+	t.Setenv("RUNNER_TEMP", "/home/runner/work/_temp")
+
+	if got := (Context{Ref: "refs/heads/main"}).Overridden(); len(got) != 0 {
+		t.Errorf("a runner's own temp directory was reported as an override: %v", got)
+	}
+
+	os.Unsetenv("RUNNER_TEMP")
+
+	if !slices.Contains((Context{}).Env(), "RUNNER_TEMP="+os.TempDir()) {
+		t.Error("a check that reads $RUNNER_TEMP must still get one when the shell has none")
 	}
 }

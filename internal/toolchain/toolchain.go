@@ -2,8 +2,14 @@ package toolchain
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"iter"
+	"os"
 	"os/exec"
+	"path"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 	"unicode"
@@ -108,13 +114,94 @@ func ForCommand(command string) []string {
 	return out
 }
 
+var fileToolchains = map[string]string{
+	".go": "go", "go.mod": "go", "go.sum": "go", "go.work": "go",
+	".rs": "rust", "Cargo.toml": "rust", "Cargo.lock": "rust", "rust-toolchain": "rust", "rust-toolchain.toml": "rust",
+	".js": "node", ".jsx": "node", ".mjs": "node", ".cjs": "node",
+	".ts": "node", ".tsx": "node", ".mts": "node", ".cts": "node", ".vue": "node", ".svelte": "node",
+	"package.json": "node", ".nvmrc": "node", ".node-version": "node",
+	".py": "python", ".pyi": "python", "pyproject.toml": "python",
+	"setup.py": "python", "setup.cfg": "python", ".python-version": "python",
+	".java": "java", ".kt": "java", ".kts": "java", "pom.xml": "java", "build.gradle": "java",
+	".rb": "ruby", ".gemspec": "ruby", "Gemfile": "ruby", ".ruby-version": "ruby",
+}
+
+func ForFiles(files iter.Seq[string]) []string {
+	if files == nil {
+		return nil
+	}
+
+	seen := map[string]bool{}
+
+	var out []string
+
+	for file := range files {
+		tc, ok := fileToolchains[path.Base(file)]
+		if !ok {
+			tc, ok = fileToolchains[path.Ext(file)]
+		}
+
+		if ok && !seen[tc] {
+			seen[tc] = true
+			out = append(out, tc)
+		}
+	}
+
+	return out
+}
+
+func For(command string, watched iter.Seq[string]) []string {
+	names := ForCommand(command)
+
+	for _, name := range ForFiles(watched) {
+		if !slices.Contains(names, name) {
+			names = append(names, name)
+		}
+	}
+
+	return names
+}
+
+var toolchainEnv = map[string][]string{
+	"go": {"GOFLAGS", "CGO_ENABLED", "GOOS", "GOARCH", "GOAMD64", "GOARM", "GOARM64",
+		"GOEXPERIMENT", "GOWORK", "GO111MODULE", "GOTOOLCHAIN"},
+	"rust":   {"RUSTFLAGS", "RUSTDOCFLAGS", "CARGO_ENCODED_RUSTFLAGS", "CARGO_BUILD_TARGET"},
+	"node":   {"NODE_OPTIONS", "NODE_ENV", "NODE_PATH"},
+	"python": {"PYTHONPATH", "VIRTUAL_ENV", "CONDA_PREFIX", "PYTHONWARNINGS", "PYTEST_ADDOPTS"},
+	"java":   {"JAVA_HOME", "JAVA_TOOL_OPTIONS", "GRADLE_OPTS", "MAVEN_OPTS"},
+	"ruby":   {"BUNDLE_GEMFILE", "RUBYOPT"},
+}
+
+func Environment(names []string, declared map[string]string) map[string]string {
+	out := map[string]string{}
+
+	for _, name := range names {
+		for _, key := range toolchainEnv[name] {
+			if _, own := declared[key]; own {
+				continue
+			}
+
+			if v, set := os.LookupEnv(key); set {
+				sum := sha256.Sum256([]byte(v))
+				out[key] = hex.EncodeToString(sum[:8])
+			}
+		}
+	}
+
+	if len(out) == 0 {
+		return nil
+	}
+
+	return out
+}
+
 type Resolver struct{ cache map[string]string }
 
 func NewResolver() *Resolver { return &Resolver{cache: map[string]string{}} }
 
-func (r *Resolver) Versions(command string) map[string]string {
+func (r *Resolver) Versions(names []string) map[string]string {
 	out := map[string]string{}
-	for _, name := range ForCommand(command) {
+	for _, name := range names {
 		v, ok := r.cache[name]
 		if !ok {
 			v = Local(name)

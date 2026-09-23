@@ -6,9 +6,6 @@ builds:
   - main: ./cmd/ghostci
     env:
       - CGO_ENABLED=0
-    # Windows is not built for release: it compiles, but refuses to run until
-    # process-group cancellation is implemented there, and shipping a binary
-    # that cannot work is worse than shipping none.
     goos:
       - linux
       - darwin

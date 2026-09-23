@@ -61,11 +61,7 @@ func Dir(repoDir string) (string, error) {
 	if filepath.IsAbs(path) {
 		return path, nil
 	}
-	root, err := git.Root(repoDir)
-	if err != nil {
-		return "", err
-	}
-	return filepath.Join(root, path), nil
+	return filepath.Abs(filepath.Join(repoDir, path))
 }
 
 func Path(repoDir string) (string, error) {

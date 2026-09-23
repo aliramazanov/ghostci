@@ -1,6 +1,10 @@
 package toolchain
 
-import "testing"
+import (
+	"os"
+	"slices"
+	"testing"
+)
 
 func TestMatches(t *testing.T) {
 	t.Parallel()
@@ -93,8 +97,8 @@ func TestForCommand(t *testing.T) {
 func TestResolverCaches(t *testing.T) {
 	t.Parallel()
 	r := NewResolver()
-	first := r.Versions("go test ./...")
-	second := r.Versions("go vet ./...")
+	first := r.Versions(For("go test ./...", nil))
+	second := r.Versions(For("go vet ./...", nil))
 	if first["go"] == "" {
 		t.Fatal("expected to resolve the local go version")
 	}
@@ -104,7 +108,95 @@ func TestResolverCaches(t *testing.T) {
 	if len(r.cache) != 1 {
 		t.Errorf("probed %d toolchains, want 1", len(r.cache))
 	}
-	if got := r.Versions("./scripts/custom.sh"); got != nil {
+	if got := r.Versions(For("./scripts/custom.sh", nil)); got != nil {
 		t.Errorf("unknown command should imply no toolchain, got %v", got)
+	}
+}
+
+func TestForFiles(t *testing.T) {
+	t.Parallel()
+	tests := map[string]struct {
+		files []string
+		want  []string
+	}{
+		"go sources":        {[]string{"cmd/main.go", "go.mod"}, []string{"go"}},
+		"typescript":        {[]string{"src/app.ts", "package.json"}, []string{"node"}},
+		"python manifest":   {[]string{"svc/pyproject.toml"}, []string{"python"}},
+		"gradle kotlin dsl": {[]string{"build.gradle.kts"}, []string{"java"}},
+		"no toolchain":      {[]string{"Makefile", "README.md", "docs/x.yml"}, nil},
+		"mixed":             {[]string{"a.go", "web/b.tsx", "c.go"}, []string{"go", "node"}},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			if got := ForFiles(slices.Values(tc.files)); !slices.Equal(got, tc.want) {
+				t.Errorf("ForFiles(%v) = %v, want %v", tc.files, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestACommandThatHidesItsToolchainStillRecordsIt(t *testing.T) {
+	t.Parallel()
+	r := NewResolver()
+
+	if got := r.Versions(For("make test", nil)); got != nil {
+		t.Fatalf("make names no toolchain on its own, got %v", got)
+	}
+
+	if got := r.Versions(For("make test", slices.Values([]string{"internal/a.go", "go.mod"}))); got["go"] == "" {
+		t.Errorf("a check watching Go sources must record the go version, got %v", got)
+	}
+}
+
+func withoutToolchainEnv(t *testing.T) {
+	t.Helper()
+
+	for _, keys := range toolchainEnv {
+		for _, key := range keys {
+			t.Setenv(key, "")
+			os.Unsetenv(key)
+		}
+	}
+}
+
+func TestEnvironmentAToolchainReadsIsRecorded(t *testing.T) {
+	withoutToolchainEnv(t)
+
+	if got := Environment([]string{"go", "python"}, nil); got != nil {
+		t.Fatalf("nothing is set, got %v", got)
+	}
+
+	t.Setenv("GOFLAGS", "-tags=integration")
+	t.Setenv("PYTEST_ADDOPTS", "-x")
+
+	got := Environment([]string{"go"}, nil)
+
+	if _, ok := got["GOFLAGS"]; !ok {
+		t.Fatalf("GOFLAGS changes what go builds, so it must be recorded: %v", got)
+	}
+
+	if got["GOFLAGS"] == "-tags=integration" {
+		t.Error("the raw value was recorded; only a digest belongs on disk")
+	}
+
+	if _, ok := got["PYTEST_ADDOPTS"]; ok {
+		t.Errorf("a go check recorded a python variable: %v", got)
+	}
+
+	other := Environment([]string{"go"}, nil)
+	t.Setenv("GOFLAGS", "-race")
+
+	if Environment([]string{"go"}, nil)["GOFLAGS"] == other["GOFLAGS"] {
+		t.Error("two different values recorded the same digest")
+	}
+}
+
+func TestAVariableTheCheckSetsItselfIsNotAmbient(t *testing.T) {
+	withoutToolchainEnv(t)
+	t.Setenv("GOFLAGS", "-tags=integration")
+
+	if got := Environment([]string{"go"}, map[string]string{"GOFLAGS": "-mod=mod"}); got != nil {
+		t.Errorf("the check's own env wins over the shell, so the shell value is irrelevant: %v", got)
 	}
 }

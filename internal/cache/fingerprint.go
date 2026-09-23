@@ -21,6 +21,7 @@ type Fingerprint struct {
 	Env        map[string]string `json:"env,omitempty"`
 	Inputs     map[string]string `json:"inputs"`
 	Toolchains map[string]string `json:"toolchains,omitempty"`
+	Ambient    map[string]string `json:"ambient,omitempty"`
 }
 
 func New(chk config.Check, inputs, toolchains map[string]string) Fingerprint {
@@ -68,6 +69,7 @@ func (f Fingerprint) Diff(other Fingerprint) []string {
 
 	out = append(out, diffMaps("env", f.Env, other.Env)...)
 	out = append(out, diffMaps("toolchain", f.Toolchains, other.Toolchains)...)
+	out = append(out, diffMaps("shell environment", f.Ambient, other.Ambient)...)
 	out = append(out, diffMaps("", f.Inputs, other.Inputs)...)
 
 	return out

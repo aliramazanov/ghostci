@@ -2,9 +2,12 @@ package expr
 
 import "fmt"
 
+const maxDepth = 256
+
 type parser struct {
-	toks []token
-	pos  int
+	toks  []token
+	pos   int
+	depth int
 }
 
 func Parse(src string) (Node, error) {
@@ -70,6 +73,13 @@ func (p *parser) parseExpr(minPrec int) (Node, error) {
 }
 
 func (p *parser) parseUnary() (Node, error) {
+	p.depth++
+	defer func() { p.depth-- }()
+
+	if p.depth > maxDepth {
+		return nil, fmt.Errorf("expr: nested more than %d levels deep at %d", maxDepth, p.peek().pos)
+	}
+
 	if p.at(tokNot) {
 		p.next()
 		operand, err := p.parseUnary()

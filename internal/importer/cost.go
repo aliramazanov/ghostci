@@ -1,4 +1,4 @@
-// Package importer classifies imported CI jobs by execution cost.
+// Package importer turns a repository's CI configuration into ghostci checks.
 package importer
 
 import "strings"

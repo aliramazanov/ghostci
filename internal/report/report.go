@@ -87,13 +87,13 @@ func Summary(w io.Writer, results []runner.Result, elapsed time.Duration, v Verd
 	}
 
 	if len(v.WatchingNothing) > 0 {
-		subject, verb := "it can", "watches"
+		verb, runs := "watches", "it runs"
 		if len(v.WatchingNothing) > 1 {
-			subject, verb = "they can", "watch"
+			verb, runs = "watch", "they run"
 		}
 
-		fmt.Fprintf(w, "\n  warning: %s %s no file here, so %s never run.\n",
-			namedChecks(v.WatchingNothing), verb, subject)
+		fmt.Fprintf(w, "\n  warning: %s %s no file here, so %s every time. Check its inputs.\n",
+			namedChecks(v.WatchingNothing), verb, runs)
 	}
 
 	if len(v.Overridden) > 0 {

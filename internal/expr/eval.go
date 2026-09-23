@@ -79,7 +79,11 @@ func Eval(n Node, ctx Context) (any, error) {
 		if err != nil {
 			return nil, err
 		}
-		return splat(target, v.Name), nil
+		out := splat(target, v.Name)
+		if err := deepDecidable(out); err != nil {
+			return nil, err
+		}
+		return out, nil
 
 	case Unary:
 		operand, err := Eval(v.Operand, ctx)

@@ -30,7 +30,10 @@ package ghostci
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"os"
+	"strings"
 
 	"github.com/aliramazanov/ghostci/internal/config"
 	"github.com/aliramazanov/ghostci/internal/engine"
@@ -214,6 +217,8 @@ func action(a engine.Action) string {
 	return "unknown"
 }
 
+var ErrTreeChanged = errors.New("ghostci: files changed while the checks ran, so the results do not describe the tree")
+
 func Run(ctx context.Context, configPath string, opts Options) ([]Result, error) {
 	checks, err := Load(configPath)
 	if err != nil {
@@ -221,8 +226,16 @@ func Run(ctx context.Context, configPath string, opts Options) ([]Result, error)
 	}
 
 	eng := engine.New(opts)
+	plan := eng.Plan(checks)
+	results := eng.Execute(ctx, plan, engine.Observer{})
 
-	return eng.Execute(ctx, eng.Plan(checks), engine.Observer{}), nil
+	if stale := eng.Stale(plan, results); len(stale) > 0 {
+		return results, fmt.Errorf("%w: %s", ErrTreeChanged, strings.Join(stale, ", "))
+	}
+
+	return results, nil
 }
 
-func Failed(results []Result) bool { return engine.Failed(results) }
+func Failed(results []Result) bool {
+	return engine.Failed(results) || len(engine.Unavailable(results)) > 0
+}

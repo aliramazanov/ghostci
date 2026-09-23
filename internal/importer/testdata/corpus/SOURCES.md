@@ -6,9 +6,12 @@ github.com/BurntSushi/ripgrep. They are test input for the importer, used to
 measure how much of a real workflow it can extract, and nothing here is built
 or executed.
 
-Every file remains under its original project's license, listed below. Only
-permissively licensed projects are included, so that vendoring them alongside
-this repository's MIT license carries no further obligation than attribution.
+Every file remains under its original project's license, listed below. Each
+directory also carries that project's own license file, unchanged, and its
+NOTICE file where the project has one, because MIT, BSD and Apache-2.0 all ask
+that the license and copyright notices travel with any copy. Only permissively
+licensed projects are included, so vendoring them alongside this repository's
+MIT license asks nothing more than that.
 Copyleft and source-available projects were deliberately left out, which is why
 Grafana (AGPL-3.0), Elasticsearch (AGPL-3.0 / SSPL-1 / Elastic-2.0) and
 Terraform (BUSL-1.1) are absent despite being useful examples.
@@ -47,5 +50,6 @@ Terraform (BUSL-1.1) are absent despite being useful examples.
 | `vercel_next.js` | vercel/next.js | MIT |
 | `vitejs_vite` | vitejs/vite | MIT |
 
-Apache-2.0 requires that its notice travel with the copied files; this table
-is that notice. To add a project, check its license first and record it here.
+Where a project offers a choice of licenses, the one listed is the one whose
+text is copied. To add a project, check its license first, copy its license
+file and any NOTICE file into its directory, and record it here.

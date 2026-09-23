@@ -118,6 +118,7 @@ func runOne(ctx context.Context, index int, chk config.Check, opts Options) Resu
 		res.Status = StatusUnavailable
 		res.Err = fmt.Errorf("working directory %s does not exist here", cmd.Dir)
 		res.Output = res.Err.Error()
+		res.ExitCode = -1
 
 		return res
 	}

@@ -256,7 +256,7 @@ func (im *azureImport) importStep(job string, index int, step azureStep,
 		Shell:   azureShell,
 		Env:     resolvedVars(all, im.known),
 		Timeout: config.Duration(timeoutMinutes(firstNonZero(step.Timeout, jobTimeout))),
-		Inputs:  im.inputsFor(command),
+		Inputs:  im.inputsFor(command, dir),
 		Exclude: im.exclude,
 	}
 
@@ -275,12 +275,12 @@ func firstNonZero(values ...int) int {
 	return 0
 }
 
-func (im *azureImport) inputsFor(command string) []string {
+func (im *azureImport) inputsFor(command, dir string) []string {
 	if len(im.inputs) > 0 {
 		return im.inputs
 	}
 
-	return inferInputs(command)
+	return inferInputsIn("", dir, command)
 }
 
 func azureCheckName(job string, step azureStep, index int) string {

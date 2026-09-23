@@ -1,9 +1,11 @@
 package workflow
 
 import (
+	"fmt"
+	"regexp"
+	"slices"
 	"strings"
 
-	"github.com/bmatcuk/doublestar/v4"
 	"go.yaml.in/yaml/v3"
 )
 
@@ -50,43 +52,77 @@ func refMatches(ref string, f refFilter) bool {
 	if len(patterns) > 0 && len(ignore) > 0 {
 		return true
 	}
-	if hasNegation(patterns) || hasNegation(ignore) {
+	if hasNegation(ignore) {
 		return true
 	}
 
 	name := strings.TrimPrefix(strings.TrimPrefix(ref, "refs/heads/"), "refs/tags/")
 
 	if len(ignore) > 0 {
-		return !confidentMatch(ignore, ref, name)
+		matched, ok := filterMatch(ignore, ref, name)
+		return !ok || !matched
 	}
 
-	for _, p := range patterns {
-		if !confident(p) {
-			return true
-		}
-	}
+	matched, ok := filterMatch(patterns, ref, name)
 
-	return confidentMatch(patterns, ref, name)
+	return !ok || matched
 }
 
-func confident(pattern string) bool {
-	return !strings.ContainsAny(pattern, "?+")
-}
-
-func confidentMatch(patterns []string, ref, name string) bool {
+func filterMatch(patterns []string, ref, name string) (matched, ok bool) {
 	for _, p := range patterns {
-		if !confident(p) {
-			continue
+		negate := strings.HasPrefix(p, "!")
+		if negate {
+			p = p[1:]
 		}
-		if ok, err := doublestar.Match(p, name); err == nil && ok {
-			return true
+
+		re, err := filterRegexp(p)
+		if err != nil {
+			return false, false
 		}
-		if ok, err := doublestar.Match(p, ref); err == nil && ok {
-			return true
+
+		if re.MatchString(name) || re.MatchString(ref) {
+			matched = !negate
 		}
 	}
 
-	return false
+	return matched, true
+}
+
+func filterRegexp(pattern string) (*regexp.Regexp, error) {
+	runes := []rune(pattern)
+
+	var b strings.Builder
+	b.WriteString("^")
+
+	for i := 0; i < len(runes); i++ {
+		switch r := runes[i]; {
+		case r == '*' && i+1 < len(runes) && runes[i+1] == '*':
+			b.WriteString(".*")
+			i++
+		case r == '*':
+			b.WriteString("[^/]*")
+		case (r == '?' || r == '+') && i == 0:
+			return nil, fmt.Errorf("workflow: %q starts with a quantifier", pattern)
+		case r == '?' || r == '+':
+			b.WriteRune(r)
+		case r == '[':
+			end := slices.Index(runes[i:], ']')
+			if end < 0 {
+				return nil, fmt.Errorf("workflow: unterminated [ in %q", pattern)
+			}
+			b.WriteString(string(runes[i : i+end+1]))
+			i += end
+		case r == '\\' && i+1 < len(runes):
+			b.WriteString(regexp.QuoteMeta(string(runes[i+1])))
+			i++
+		default:
+			b.WriteString(regexp.QuoteMeta(string(r)))
+		}
+	}
+
+	b.WriteString("$")
+
+	return regexp.Compile(b.String())
 }
 
 func hasNegation(globs []string) bool {

@@ -1,10 +1,5 @@
 version: "2"
 
-# The default set plus the linters that found real defects rather than style
-# opinions. gocognit and prealloc are kept because both caught genuine issues:
-# a matrix expander that had grown past following, and slices built in loops
-# whose size was already known. nilnil found a context that read as null and
-# silently answered a gate.
 linters:
   enable:
     - gocognit
@@ -22,22 +17,15 @@ linters:
       min-complexity: 30
   exclusions:
     rules:
-      # Writing a report to stdout cannot meaningfully fail mid-render, and
-      # checking every Fprintf would bury the code that matters. Writes whose
-      # failure changes an outcome, such as producing the config file, are
-      # checked at the call site instead.
       - source: "fmt\\.Fprint"
         linters:
           - errcheck
-      # Tests build fixtures and shell out on purpose.
       - path: _test\.go
         linters:
           - errcheck
           - gosec
           - prealloc
           - errorlint
-      # Deliberate: a guard that cannot determine its answer must not block the
-      # thing it guards, and each site says so.
       - path: (internal/hook/hook\.go|internal/git/repo\.go|internal/importer/azure\.go)
         linters:
           - nilerr

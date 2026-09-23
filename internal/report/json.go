@@ -65,6 +65,10 @@ func JSON(w io.Writer, results []runner.Result, elapsed time.Duration, v Verdict
 		out.Checks = append(out.Checks, c)
 	}
 
+	if len(v.Stale) > 0 || len(v.Unavailable) > 0 {
+		out.Failed = true
+	}
+
 	enc := json.NewEncoder(w)
 	enc.SetIndent("", "  ")
 

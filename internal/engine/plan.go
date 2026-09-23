@@ -89,6 +89,8 @@ func (e *Engine) Plan(checks []config.Check) Plan {
 		plan.Decisions = append(plan.Decisions, e.decide(d, changes, tree))
 	}
 
+	plan.cost = e.costs(plan.Decisions)
+
 	return plan
 }
 
@@ -101,6 +103,9 @@ func (e *Engine) decide(d selector.Decision, changes selector.Changes, tree *cac
 
 	case d.Unknown:
 		return e.cacheDecision(d.Check, Reason{Kind: UnknownInputs}, tree)
+
+	case !d.Run && tree != nil && !tree.Any(selector.Matcher(d.Check)):
+		return e.watchesNothing(d.Check)
 
 	case !d.Run:
 		return Decision{Check: d.Check, Action: Skip,

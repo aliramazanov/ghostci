@@ -1,6 +1,7 @@
 package importer
 
 import (
+	"strings"
 	"testing"
 	"time"
 )
@@ -218,6 +219,36 @@ func TestInfersInputsPerEcosystem(t *testing.T) {
 	}
 }
 
+func TestADependencyBumpReachesTheToolsItCanBreak(t *testing.T) {
+	t.Parallel()
+
+	tests := map[string][]string{
+		"npx eslint .":       {"package-lock.json", "yarn.lock", "pnpm-lock.yaml"},
+		"tsc --noEmit":       {"package-lock.json"},
+		"ruff check .":       {"uv.lock", "poetry.lock", "Pipfile.lock"},
+		"pytest":             {"uv.lock"},
+		"./gradlew check":    {"gradle/libs.versions.toml", "gradle/wrapper/gradle-wrapper.properties"},
+		"dotnet test":        {"**/packages.lock.json", "Directory.Packages.props"},
+		"swift test":         {"Package.resolved"},
+		"cargo test":         {"Cargo.lock"},
+		"go test ./...":      {"go.sum"},
+		"bundle exec rspec":  {"Gemfile.lock"},
+		"vendor/bin/phpunit": {"composer.lock"},
+	}
+	for cmd, want := range tests {
+		t.Run(cmd, func(t *testing.T) {
+			t.Parallel()
+
+			got := inferInputs(cmd)
+			for _, lock := range want {
+				if !contains(got, lock) {
+					t.Errorf("inferInputs(%q) = %v, missing %q: a cached pass would outlive the bump", cmd, got, lock)
+				}
+			}
+		})
+	}
+}
+
 func contains(hay []string, needle string) bool {
 	for _, h := range hay {
 		if h == needle {
@@ -378,5 +409,44 @@ jobs:
 	}
 	if _, ok := env["UNKNOWABLE"]; ok {
 		t.Error("a value only CI can resolve must be dropped, not guessed")
+	}
+}
+
+func TestAMatrixLegOnAnotherPlatformIsNotImportedAsThisOne(t *testing.T) {
+	t.Parallel()
+
+	res := importYAML(t, `
+on: [push]
+jobs:
+  test:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - run: go test ./...
+      - if: runner.os == 'Linux'
+        run: make linux-only
+`)
+
+	var unsupported []string
+	for _, e := range res.Entries {
+		if e.Outcome == UnsupportedFeature {
+			unsupported = append(unsupported, e.Matrix)
+		}
+	}
+
+	if len(unsupported) != 2 {
+		t.Errorf("want the windows and macos legs reported unsupported, got %v", unsupported)
+	}
+
+	for _, c := range res.Checks {
+		if !strings.Contains(c.Name, "ubuntu-latest") {
+			t.Errorf("a leg for another platform became a check: %s", c.Name)
+		}
+	}
+
+	if len(res.Checks) != 2 {
+		t.Errorf("want the ubuntu leg's two steps, got %d checks", len(res.Checks))
 	}
 }

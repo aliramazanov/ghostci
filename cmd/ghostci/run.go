@@ -95,9 +95,7 @@ func runChecks(args []string) int {
 	}
 
 	if runner.Disabled() {
-		if !opts.hookMode {
-			fmt.Fprintf(os.Stderr, "ghostci: %s is set to off, running nothing\n", runner.Disable)
-		}
+		fmt.Fprintf(os.Stderr, "ghostci: %s is set to off, running nothing\n", runner.Disable)
 
 		return exitOK
 	}
@@ -143,7 +141,7 @@ func runChecks(args []string) int {
 	defer stop()
 
 	if plan.Count(engine.Run) == 0 {
-		return reportNothingToRun(plan, opts)
+		return reportNothingToRun(eng, plan, opts)
 	}
 
 	return runPlan(ctx, eng, plan, cfg.Checks, opts)
@@ -170,18 +168,23 @@ func diffBase(opts options, pushed []hook.Ref) (string, bool) {
 	return resolved, true
 }
 
-func reportNothingToRun(plan engine.Plan, opts options) int {
+func reportNothingToRun(eng *engine.Engine, plan engine.Plan, opts options) int {
 	deferred := plan.Deferred()
 
+	verdict := report.Verdict{
+		WatchingNothing: eng.WatchingNothing(),
+		Overridden:      eng.OverriddenContext(),
+	}
+
 	if opts.jsonOut {
-		if err := report.JSON(os.Stdout, deferred, 0, report.Verdict{}); err != nil {
+		if err := report.JSON(os.Stdout, deferred, 0, verdict); err != nil {
 			return exitBadUsage
 		}
 
 		return exitOK
 	}
 
-	if opts.quiet {
+	if opts.quiet && !verdict.NeedsAttention() {
 		return exitOK
 	}
 
@@ -189,7 +192,7 @@ func reportNothingToRun(plan engine.Plan, opts options) int {
 		report.Line(os.Stdout, r)
 	}
 
-	report.Summary(os.Stdout, deferred, 0, report.Verdict{})
+	report.Summary(os.Stdout, deferred, 0, verdict)
 
 	return exitOK
 }

@@ -294,7 +294,7 @@ func TestGitHubStepFilesAreScratch(t *testing.T) {
 
 	for _, r := range res {
 		if r.Status != StatusPassed {
-			t.Errorf("%s: %v — each check must get its own empty files", r.Name, r.Status)
+			t.Errorf("%s: %v, but each check must get its own empty files", r.Name, r.Status)
 		}
 	}
 }

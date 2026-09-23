@@ -35,7 +35,7 @@ func scriptInputs(root, dir, command string, depth int) ([]string, bool) {
 		}
 
 		if installOnly[name] {
-			out = append(out, manifestGlobs...)
+			out = append(out, scoped(manifestGlobs, dir)...)
 
 			continue
 		}
@@ -55,17 +55,31 @@ func scriptInputs(root, dir, command string, depth int) ([]string, bool) {
 		}
 
 		out = append(out, inner...)
-		out = append(out, manifestGlobs...)
+		out = append(out, scoped(manifestGlobs, dir)...)
 	}
 
 	return out, len(out) > 0
+}
+
+var elsewhere = map[string]bool{
+	"-w": true, "--workspace": true, "--workspaces": true, "-ws": true,
+	"--prefix": true, "-C": true, "--dir": true, "--cwd": true,
+	"--filter": true, "-F": true, "-r": true, "--recursive": true,
+	"--include-workspace-root": true,
 }
 
 func scriptName(args string) (string, bool) {
 	fields := strings.Fields(args)
 
 	var words []string
+	passthrough := false
 	for _, f := range fields {
+		if f == "--" {
+			passthrough = true
+		}
+		if flag, _, _ := strings.Cut(f, "="); !passthrough && elsewhere[flag] {
+			return "", false
+		}
 		if strings.HasPrefix(f, "-") || strings.Contains(f, "=") {
 			continue
 		}

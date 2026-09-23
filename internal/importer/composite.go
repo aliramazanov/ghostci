@@ -136,7 +136,7 @@ func (im *importState) compositeRunStep(sub workflow.Step, i int, at site, ctx e
 		Dir:     sub.WorkingDirectory,
 		Shell:   normaliseShell(sub.Shell),
 		Env:     compositeEnv(ctx, sub.Env),
-		Inputs:  inferInputs(command),
+		Inputs:  inferInputsIn("", sub.WorkingDirectory, command),
 	}
 	e := at.entry(sub, i, Extracted, "")
 	e.Command = command

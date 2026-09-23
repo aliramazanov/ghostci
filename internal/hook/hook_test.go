@@ -344,3 +344,27 @@ func TestRealPathComparesTwoSpellingsOfOneDirectory(t *testing.T) {
 		t.Errorf("realPath = %q via the link and %q directly", viaLink, direct)
 	}
 }
+
+func TestInstallFromASubdirectoryUsesTheRepositorysHooks(t *testing.T) {
+	t.Parallel()
+	dir := newRepo(t)
+	sub := filepath.Join(dir, "sub", "deeper")
+
+	if err := os.MkdirAll(sub, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	path, err := Install(sub, false)
+	if err != nil {
+		t.Fatalf("installing from a subdirectory failed: %v", err)
+	}
+
+	want := filepath.Join(realPath(dir), ".git", "hooks", Name)
+	if realPath(path) != want {
+		t.Errorf("installed at %s, want %s", path, want)
+	}
+
+	if !Installed(dir) {
+		t.Error("the repository's own hook is missing")
+	}
+}

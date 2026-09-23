@@ -28,6 +28,8 @@ ghostci: running 2 of 4 checks
 go install github.com/aliramazanov/ghostci/cmd/ghostci@latest
 ```
 
+Needs Go 1.26.5 or newer.
+
 ## Quickstart
 
 ```bash
@@ -67,7 +69,7 @@ Because it does less, not because it runs things faster.
 
 **It skips checks your change cannot affect.** Touch a `.md` file and the Go tests do not run.
 
-**It skips checks whose inputs are unchanged.** Content-addressed, keyed on file contents plus command plus toolchain version. Clean files reuse the hash git already computed, so the check costs nothing to evaluate.
+**It skips checks whose inputs are unchanged.** Content-addressed, keyed on file contents plus command plus toolchain version, plus the environment variables that toolchain reads, such as `GOFLAGS` or `VIRTUAL_ENV`. Every file is identified the way git identifies it, so clean files reuse the hash git already computed and committing a file does not change what it is.
 
 Nothing changed since the last run, every tool's own cache already warm,
 measured with `hyperfine` on one machine:
@@ -96,7 +98,7 @@ running it quicker.
 
 A tool that says "all clear" when CI would have failed is worse than no tool. So:
 
-- A check whose inputs cannot be determined **always runs**, and is never cached.
+- A check whose inputs cannot be determined **always runs**, and is never cached. So does a check whose inputs match no file at all, and the report names it so the typo gets fixed.
 - A command that **delegates** decides nothing on its own. `make test` is read from the recipe it runs and `npm test` from the script in `package.json`, not from the words `make` and `npm`: a Makefile builds whatever its recipes build, and reading one as a C build skipped `make test` in a Go repository on a change to its Go files. Anything that cannot be read leaves the check running, and one unreadable part leaves the whole check running: resolving `npm ci` while `npm test` stayed unknown would watch the lockfile alone.
 - Only passes are cached. Failures re-run at full cost, every time.
 - A workflow step that depends on CI-only state is written to your config **commented out with the reason**, never silently dropped.
@@ -150,9 +152,13 @@ checks:
       CI: "true"
 ```
 
-Flags: `--all` run everything, `--explain` show reasoning, `--no-cache`, `--fail-fast`, `-j N` parallelism, `--since <ref>` compare against a specific ref, `-f` config path.
+Flags: `--all` run everything, `--explain` show reasoning, `--no-cache`, `--fail-fast`, `-j N` parallelism, `--since <ref>` compare against a specific ref, `--timeout <d>` default per-check timeout, `--json` one JSON document instead of the live report, `-q`/`--quiet` say nothing unless something needs attention, `-f` config path.
 
-Escape hatches: `git push --no-verify`, or `GHOSTCI_SKIP=1 git push`.
+`init` takes `--from <file>` to import a specific CI file, `--dry-run` to print the config instead of writing it, `--force` to replace an existing one, and `-o <path>` to write somewhere else.
+
+Escape hatches: `git push --no-verify`, or `GHOSTCI_SKIP=1 git push` to skip the hook once. `GHOSTCI=0` turns ghostci off wherever it runs, and says so. If the hook cannot find ghostci on `PATH`, point `GHOSTCI_BIN` at the binary.
+
+Under the hook, a check that cannot run on this machine, because a tool or directory it needs is missing, does not block the push. The report says the push was not fully checked, and CI still runs everything.
 
 ### Other providers
 

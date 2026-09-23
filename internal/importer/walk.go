@@ -5,6 +5,7 @@ import (
 	"maps"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 
@@ -60,8 +61,11 @@ func (im *importState) importWorkflowAt(wf *workflow.Workflow, a Assumptions, de
 				"%s/%s: matrix truncated to %d combinations", wfName, nj.ID, workflow.MaxCombinations))
 		}
 
-		runnerOS := workflow.RunnerOS(job.RunsOnLabels())
-		if runnerOS != a.RunnerOS {
+		labels := job.RunsOnLabels()
+		perLeg := slices.ContainsFunc(labels, func(l string) bool { return strings.Contains(l, "${{") })
+
+		runnerOS := workflow.RunnerOS(labels)
+		if !perLeg && runnerOS != a.RunnerOS {
 			im.res.Entries = append(im.res.Entries, Entry{
 				Workflow: wfName, Job: nj.ID, Step: "(job)",
 				Outcome: UnsupportedFeature,
@@ -71,23 +75,55 @@ func (im *importState) importWorkflowAt(wf *workflow.Workflow, a Assumptions, de
 		}
 
 		for _, combo := range combos {
-			ctxs := make([]expr.Context, 0, len(a.events()))
-
-			for _, event := range a.events() {
-				if depth == 0 && !wf.TriggersOn(event) {
-					continue
-				}
-
-				ctxs = append(ctxs, buildContext(a, event, runnerOS, combo, wf.Env, job.Env))
+			legOS := runnerOS
+			if perLeg {
+				legOS = legRunnerOS(labels, buildContext(a, a.events()[0], a.RunnerOS, combo, wf.Env, job.Env))
 			}
 
-			if len(ctxs) == 0 {
+			if legOS != a.RunnerOS {
+				im.res.Entries = append(im.res.Entries, Entry{
+					Workflow: wfName, Job: nj.ID, Matrix: combo.Label(), Step: "(job)",
+					Outcome: UnsupportedFeature,
+					Reason:  fmt.Sprintf("targets %s, host is %s", legOS, a.RunnerOS),
+				})
 				continue
 			}
 
-			im.importJob(wfName, nj.ID, job, combo, ctxs)
+			if ctxs := legContexts(wf, job, combo, a, legOS, depth); len(ctxs) > 0 {
+				im.importJob(wfName, nj.ID, job, combo, ctxs)
+			}
 		}
 	}
+}
+
+func legContexts(wf *workflow.Workflow, job workflow.Job, combo workflow.Combination,
+	a Assumptions, runnerOS string, depth int) []expr.Context {
+
+	ctxs := make([]expr.Context, 0, len(a.events()))
+
+	for _, event := range a.events() {
+		if depth == 0 && !wf.TriggersOn(event) {
+			continue
+		}
+
+		ctxs = append(ctxs, buildContext(a, event, runnerOS, combo, wf.Env, job.Env))
+	}
+
+	return ctxs
+}
+
+func legRunnerOS(labels []string, ctx expr.Context) string {
+	resolved := make([]string, 0, len(labels))
+
+	for _, l := range labels {
+		if v, err := expr.Interpolate(l, ctx); err == nil {
+			l = v
+		}
+
+		resolved = append(resolved, l)
+	}
+
+	return workflow.RunnerOS(resolved)
 }
 
 func jobGateContexts(ctxs []expr.Context) []expr.Context {
@@ -490,7 +526,7 @@ func (im *importState) importJobAsOne(wfName, jobID string, job workflow.Job,
 		Dir:      dir,
 		Shell:    shellFor(im.defaults, job.Defaults, workflow.Step{}),
 		Env:      env,
-		Inputs:   im.inputsFor(command, dir),
+		Inputs:   im.mergedInputsFor(command, dir, dirs),
 		Optional: optional,
 		Exclude:  im.pathsIgnore,
 		Timeout:  config.Duration(job.Timeout()),
@@ -501,6 +537,14 @@ func (im *importState) importJobAsOne(wfName, jobID string, job workflow.Job,
 	entry.Outcome, entry.Command = Extracted, command
 	entry.Heavy = im.routeCheck(jobID, chk)
 	im.res.Entries = append(im.res.Entries, entry)
+}
+
+func (im *importState) mergedInputsFor(command, dir string, stepDirs []string) []string {
+	if dir != "" || len(im.paths) > 0 {
+		return im.inputsFor(command, dir)
+	}
+
+	return scoped(im.inputsFor(command, dir), stepDirs...)
 }
 
 func (im *importState) deferJob(entry Entry, reason string) {

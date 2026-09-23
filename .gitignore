@@ -1,1 +1,4 @@
 .ghostci/
+.idea/
+bin/
+dist/

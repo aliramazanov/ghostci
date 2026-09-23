@@ -2,6 +2,7 @@ package engine
 
 import (
 	"context"
+	"maps"
 	"time"
 
 	"github.com/aliramazanov/ghostci/internal/cache"
@@ -64,7 +65,7 @@ func (e *Engine) planAll(checks []config.Check) Plan {
 		plan.Decisions = append(plan.Decisions, e.cacheDecision(chk, Reason{Kind: Forced}, tree))
 	}
 
-	plan.cost = e.costs(checks)
+	plan.cost = e.costs(plan.Decisions)
 
 	return plan
 }
@@ -82,18 +83,27 @@ func (e *Engine) cacheDecision(chk config.Check, why Reason, tree *cache.Tree) D
 	inputs := tree.Hashes(selector.Matcher(chk))
 
 	if len(inputs) == 0 {
-		e.watchingNothing = append(e.watchingNothing, chk.Name)
+		return e.watchesNothing(chk)
 	}
 
-	fp := cache.New(fpChk, inputs, e.versions.Versions(chk.Command))
+	toolchains := toolchain.For(chk.Command, maps.Keys(inputs))
 
-	if hit, _ := e.store.Lookup(fp); hit {
+	fp := cache.New(fpChk, inputs, e.versions.Versions(toolchains))
+	fp.Ambient = toolchain.Environment(toolchains, chk.Env)
+
+	if hit, _ := e.store.Lookup(chk.Name, fp); hit {
 		return Decision{Check: chk, Action: Cached,
 			Reason: Reason{Kind: InputsUnchanged}, Fingerprint: &fp}
 	}
 
 	return Decision{Check: chk, Action: Run,
 		Reason: e.missReason(chk.Name, fp, why), Fingerprint: &fp}
+}
+
+func (e *Engine) watchesNothing(chk config.Check) Decision {
+	e.watchingNothing = append(e.watchingNothing, chk.Name)
+
+	return Decision{Check: chk, Action: Run, Reason: Reason{Kind: WatchesNothing}}
 }
 
 func (e *Engine) missReason(name string, fp cache.Fingerprint, fallback Reason) Reason {
@@ -245,11 +255,13 @@ func watched(chk config.Check) func(string) bool {
 	return selector.Matcher(chk)
 }
 
-func (e *Engine) costs(checks []config.Check) map[string]time.Duration {
-	out := make(map[string]time.Duration, len(checks))
+func (e *Engine) costs(decisions []Decision) map[string]time.Duration {
+	out := make(map[string]time.Duration, len(decisions))
 
-	for _, chk := range checks {
-		out[chk.Name] = e.store.LastDuration(chk.Name)
+	for _, d := range decisions {
+		if d.Action == Run {
+			out[d.Check.Name] = e.store.LastDuration(d.Check.Name)
+		}
 	}
 
 	return out

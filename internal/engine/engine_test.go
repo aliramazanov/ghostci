@@ -5,10 +5,12 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/aliramazanov/ghostci/internal/cache"
 	"github.com/aliramazanov/ghostci/internal/config"
 	"github.com/aliramazanov/ghostci/internal/runner"
 )
@@ -185,6 +187,59 @@ func TestCacheHitOnSecondRun(t *testing.T) {
 	}
 }
 
+func TestAPassSurvivesCommittingWhatItChecked(t *testing.T) {
+	t.Parallel()
+	dir := repo(t)
+	only := []config.Check{{Name: "go", Command: "true", Inputs: []string{"**/*.go"}}}
+
+	write(t, dir, "a.go", "package a\n\nfunc X() {}\n")
+	write(t, dir, "b.go", "package a\n")
+
+	eng := New(Options{Root: dir, All: true})
+	eng.Execute(context.Background(), eng.Plan(only), Observer{})
+
+	commit(t, dir)
+
+	if a, r := actionOf(New(Options{Root: dir, All: true}).Plan(only), "go"); a != Cached {
+		t.Fatalf("committing the checked content unchanged must keep the pass, got %v (%v)", a, r.Diffs)
+	}
+}
+
+func TestAToolchainBehindMakeIsPartOfTheFingerprint(t *testing.T) {
+	t.Parallel()
+	dir := repo(t)
+	only := []config.Check{{Name: "go", Command: "make test", Inputs: []string{"**/*.go"}}}
+
+	fp := New(Options{Root: dir, All: true}).Plan(only).Decisions[0].Fingerprint
+
+	if fp == nil || fp.Toolchains["go"] == "" {
+		t.Fatalf("a make check over Go sources must record the go version, got %+v", fp)
+	}
+}
+
+func TestAToolFlagInTheShellInvalidatesThePass(t *testing.T) {
+	t.Setenv("GOFLAGS", "")
+	os.Unsetenv("GOFLAGS")
+
+	dir := repo(t)
+	only := []config.Check{{Name: "vet", Command: "true", Inputs: []string{"**/*.go"}}}
+
+	eng := New(Options{Root: dir, All: true})
+	eng.Execute(context.Background(), eng.Plan(only), Observer{})
+
+	t.Setenv("GOFLAGS", "-tags=integration")
+
+	a, r := actionOf(New(Options{Root: dir, All: true}).Plan(only), "vet")
+
+	if a != Run {
+		t.Fatalf("a pass recorded without GOFLAGS was served with it, got %v", a)
+	}
+
+	if !strings.Contains(strings.Join(r.Diffs, " "), "GOFLAGS") {
+		t.Errorf("the miss should name the variable, got %v", r.Diffs)
+	}
+}
+
 func TestEditingAnInputInvalidatesTheCache(t *testing.T) {
 	t.Parallel()
 	dir := repo(t)
@@ -332,6 +387,28 @@ func names(checks []config.Check) []string {
 	}
 
 	return out
+}
+
+func TestADiffBasedRunAlsoRunsCheapestFirst(t *testing.T) {
+	t.Parallel()
+	dir := repo(t)
+	base := headSHA(t, dir)
+	only := []config.Check{
+		{Name: "slow", Command: "true", Inputs: []string{"**/*.go"}},
+		{Name: "fast", Command: "true", Inputs: []string{"**/*.go"}},
+	}
+
+	store := cache.Open(dir, cache.ReadWrite())
+	store.Record("slow", cache.Fingerprint{Command: "earlier slow"}, 9*time.Second)
+	store.Record("fast", cache.Fingerprint{Command: "earlier fast"}, 100*time.Millisecond)
+
+	write(t, dir, "a.go", "package a\n\nfunc X() {}\n")
+
+	got := names(New(Options{Root: dir, Since: base}).Plan(only).Checks())
+
+	if want := []string{"fast", "slow"}; !slices.Equal(got, want) {
+		t.Errorf("order = %v, want %v: recorded cost must order every run, not only --all", got, want)
+	}
 }
 
 func TestOrderingPreservesMembership(t *testing.T) {

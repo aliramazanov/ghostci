@@ -2,9 +2,12 @@ package cache
 
 import (
 	"bytes"
+	"crypto/sha1"
+	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -120,19 +123,19 @@ func TestStoreRoundTrip(t *testing.T) {
 	s := Open(dir, ReadWrite())
 	f := fp(map[string]string{"a.go": "1"})
 
-	if hit, _ := s.Lookup(f); hit {
+	if hit, _ := s.Lookup("test", f); hit {
 		t.Fatal("empty store reported a hit")
 	}
 
 	s.Record("test", f, 250*time.Millisecond)
 
-	if hit, _ := s.Lookup(f); !hit {
+	if hit, _ := s.Lookup("test", f); !hit {
 		t.Fatal("recorded fingerprint did not hit")
 	}
 
 	changed := fp(map[string]string{"a.go": "2"})
 
-	if hit, _ := s.Lookup(changed); hit {
+	if hit, _ := s.Lookup("test", changed); hit {
 		t.Fatal("a changed input must miss")
 	}
 }
@@ -143,7 +146,7 @@ func TestStoreDisabled(t *testing.T) {
 	f := fp(map[string]string{"a.go": "1"})
 	s.Record("test", f, time.Second)
 
-	if hit, _ := s.Lookup(f); hit {
+	if hit, _ := s.Lookup("test", f); hit {
 		t.Error("a disabled store must never hit")
 	}
 }
@@ -177,14 +180,132 @@ func TestCorruptRecordIsAMiss(t *testing.T) {
 	s.Record("test", f, time.Second)
 
 	key, _ := f.Key()
-	path := filepath.Join(dir, ".ghostci", "cache", key+".json")
+	path := filepath.Join(s.checkDir("test"), key+".json")
 
 	if err := os.WriteFile(path, []byte("{ truncated"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
-	if hit, _ := s.Lookup(f); hit {
+	if hit, _ := s.Lookup("test", f); hit {
 		t.Error("a corrupt record must not count as a hit")
+	}
+}
+
+func recordAt(t *testing.T, s *Store, name string, f Fingerprint, at time.Time) string {
+	t.Helper()
+
+	s.Record(name, f, time.Second)
+
+	key, _ := f.Key()
+	path := filepath.Join(s.checkDir(name), key+".json")
+
+	if err := os.Chtimes(path, at, at); err != nil {
+		t.Fatal(err)
+	}
+
+	return path
+}
+
+func version(n int) Fingerprint {
+	return fp(map[string]string{"a.go": strconv.Itoa(n)})
+}
+
+func TestHistoryIsBoundedPerCheck(t *testing.T) {
+	t.Parallel()
+	s := Open(t.TempDir(), ReadWrite())
+	start := time.Now().Add(-time.Hour)
+	total := keepPerCheck + 5
+
+	other := recordAt(t, s, "other", version(0), start)
+
+	for i := range total {
+		recordAt(t, s, "test", version(i), start.Add(time.Duration(i+1)*time.Second))
+	}
+
+	if got := len(history(s.checkDir("test"))); got != keepPerCheck {
+		t.Errorf("kept %d records, want %d", got, keepPerCheck)
+	}
+
+	if hit, _ := s.Lookup("test", version(total-keepPerCheck-1)); hit {
+		t.Error("the oldest record outlived the bound")
+	}
+
+	if hit, _ := s.Lookup("test", version(total-keepPerCheck)); !hit {
+		t.Error("a record inside the bound was dropped")
+	}
+
+	if _, err := os.Stat(other); err != nil {
+		t.Errorf("recording one check dropped another's history: %v", err)
+	}
+}
+
+func TestAStateThatKeepsHittingIsKept(t *testing.T) {
+	t.Parallel()
+	s := Open(t.TempDir(), ReadWrite())
+	start := time.Now().Add(-time.Hour)
+
+	recordAt(t, s, "test", version(0), start)
+
+	for i := 1; i < keepPerCheck; i++ {
+		recordAt(t, s, "test", version(i), start.Add(time.Duration(i)*time.Second))
+	}
+
+	if hit, _ := s.Lookup("test", version(0)); !hit {
+		t.Fatal("the first state should still be cached")
+	}
+
+	s.Record("test", version(keepPerCheck), time.Second)
+
+	if hit, _ := s.Lookup("test", version(0)); !hit {
+		t.Error("a state that just hit was evicted ahead of ones nobody used")
+	}
+
+	if hit, _ := s.Lookup("test", version(1)); hit {
+		t.Error("the least recently used state should have made room")
+	}
+}
+
+func TestLastForIsTheNewestRecord(t *testing.T) {
+	t.Parallel()
+	s := Open(t.TempDir(), ReadWrite())
+	start := time.Now().Add(-time.Hour)
+
+	recordAt(t, s, "test", version(2), start.Add(2*time.Second))
+	recordAt(t, s, "test", version(1), start.Add(time.Second))
+
+	previous, ok := s.LastFor("test")
+
+	if !ok || previous.Inputs["a.go"] != "2" {
+		t.Errorf("LastFor = %+v, %v; want the most recent record", previous.Inputs, ok)
+	}
+}
+
+func TestFlatRecordsFromOlderVersionsAreRemoved(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	flat := filepath.Join(root, ".ghostci", "cache")
+
+	if err := os.MkdirAll(flat, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, name := range []string{"0123abcd.json", "tmp-42"} {
+		if err := os.WriteFile(filepath.Join(flat, name), []byte(`{"name":"test"}`), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	Open(root, ReadWrite()).Record("test", version(1), time.Second)
+
+	entries, err := os.ReadDir(flat)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, e := range entries {
+		if !e.IsDir() {
+			t.Errorf("%s survived; the cache root should hold only per-check directories", e.Name())
+		}
 	}
 }
 
@@ -258,12 +379,70 @@ func TestTreeHashesCleanAndDirtyFiles(t *testing.T) {
 
 	dirty := tree2.Hashes(onlyGo)
 
-	if got := dirty["a.go"]; !strings.HasPrefix(got, "c:") {
-		t.Errorf("a dirty file should be content hashed, got %q", got)
+	if got, want := dirty["a.go"], "b:"+hashObject(t, dir, "a.go"); got != want {
+		t.Errorf("a dirty file should hash to the blob git would store, got %q want %q", got, want)
 	}
 
 	if dirty["a.go"] == clean["a.go"] {
 		t.Error("editing a file must change its identity")
+	}
+}
+
+func hashObject(t *testing.T, dir, file string) string {
+	t.Helper()
+
+	cmd := exec.Command("git", "hash-object", file)
+	cmd.Dir = dir
+
+	out, err := cmd.Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	return strings.TrimSpace(string(out))
+}
+
+func TestCommittingAFileKeepsItsIdentity(t *testing.T) {
+	t.Parallel()
+	dir := gitRepo(t)
+
+	if err := os.WriteFile(filepath.Join(dir, "a.go"), []byte("package a\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	commit(t, dir)
+
+	for _, body := range []string{"package a\n\nfunc X() {}\n", "package a\n\nfunc Y() {}\n"} {
+		if err := os.WriteFile(filepath.Join(dir, "a.go"), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+
+		if err := os.WriteFile(filepath.Join(dir, "new.go"), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+
+		before, err := ScanTree(git.NewSession(dir))
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		dirty := before.Hashes(onlyGo)
+
+		commit(t, dir)
+
+		after, err := ScanTree(git.NewSession(dir))
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		committed := after.Hashes(onlyGo)
+
+		for _, file := range []string{"a.go", "new.go"} {
+			if dirty[file] != committed[file] {
+				t.Errorf("committing %s unchanged changed its identity: %q before, %q after",
+					file, dirty[file], committed[file])
+			}
+		}
 	}
 }
 
@@ -359,7 +538,7 @@ func TestDisabledStoreWritesNothingToDisk(t *testing.T) {
 
 	Open(root, Off()).Record("test", f, time.Second)
 
-	if hit, _ := Open(root, ReadWrite()).Lookup(f); hit {
+	if hit, _ := Open(root, ReadWrite()).Lookup("test", f); hit {
 		t.Error("a disabled store wrote a record that a reading store then served")
 	}
 }
@@ -373,10 +552,10 @@ func TestBypassSkipsLookupsButStillRecords(t *testing.T) {
 	bypass := Open(root, Bypass())
 	bypass.Record("test", f, time.Second)
 
-	if hit, _ := bypass.Lookup(f); hit {
+	if hit, _ := bypass.Lookup("test", f); hit {
 		t.Error("bypass served a cache hit")
 	}
-	if hit, _ := Open(root, ReadWrite()).Lookup(f); !hit {
+	if hit, _ := Open(root, ReadWrite()).Lookup("test", f); !hit {
 		t.Error("bypass did not record, so the next run pays for it again")
 	}
 }
@@ -407,6 +586,11 @@ func TestEveryFingerprintFieldChangesTheKey(t *testing.T) {
 			Env: map[string]string{"MODE": "one"}}, map[string]string{"a.go": "2"}, map[string]string{"go": "1.26"}),
 		"toolchain": New(config.Check{Name: "c", Command: "go test ./...", Dir: "sub", Shell: "bash -e",
 			Env: map[string]string{"MODE": "one"}}, map[string]string{"a.go": "1"}, map[string]string{"go": "1.27"}),
+		"shell environment": func() Fingerprint {
+			f := base
+			f.Ambient = map[string]string{"GOFLAGS": "digest"}
+			return f
+		}(),
 	}
 
 	for field, v := range variants {
@@ -417,6 +601,19 @@ func TestEveryFingerprintFieldChangesTheKey(t *testing.T) {
 		if key == baseKey {
 			t.Errorf("changing %s did not change the fingerprint, so a stale pass would be served", field)
 		}
+	}
+}
+
+func TestAnUnsetEnvironmentKeepsExistingKeys(t *testing.T) {
+	t.Parallel()
+
+	body, err := json.Marshal(fp(map[string]string{"a.go": "1"}))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if strings.Contains(string(body), "ambient") {
+		t.Errorf("an empty environment reached the key, so every recorded pass would miss once: %s", body)
 	}
 }
 
@@ -559,12 +756,12 @@ func TestHashingDistinguishesContent(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	ha, err := hashFile(a)
+	ha, err := blobID(a, sha1.New)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	hb, err := hashFile(b)
+	hb, err := blobID(b, sha1.New)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -581,7 +778,7 @@ func TestHashingDistinguishesContent(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	again, err := hashFile(b)
+	again, err := blobID(b, sha1.New)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -590,7 +787,7 @@ func TestHashingDistinguishesContent(t *testing.T) {
 		t.Errorf("identical contents hashed differently: %q and %q", ha, again)
 	}
 
-	if _, err := hashFile(filepath.Join(dir, "absent")); err == nil {
+	if _, err := blobID(filepath.Join(dir, "absent"), sha1.New); err == nil {
 		t.Error("hashing a missing file reported success")
 	}
 }
@@ -768,5 +965,57 @@ func TestDiffNamesWhatActuallyChanged(t *testing.T) {
 
 	if got := base.Diff(base); len(got) != 0 {
 		t.Errorf("an identical fingerprint reported %v", got)
+	}
+}
+
+func TestASymlinkHashesAsTheLinkGitStores(t *testing.T) {
+	t.Parallel()
+	dir := gitRepo(t)
+
+	for _, name := range []string{"target-a.txt", "target-b.txt"} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte("same\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if err := os.Symlink("target-a.txt", filepath.Join(dir, "link.txt")); err != nil {
+		t.Fatal(err)
+	}
+
+	onlyLink := func(f string) bool { return f == "link.txt" }
+
+	first, err := ScanTree(git.NewSession(dir))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	before := first.Hashes(onlyLink)["link.txt"]
+
+	if err := os.Remove(filepath.Join(dir, "link.txt")); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := os.Symlink("target-b.txt", filepath.Join(dir, "link.txt")); err != nil {
+		t.Fatal(err)
+	}
+
+	second, err := ScanTree(git.NewSession(dir))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if after := second.Hashes(onlyLink)["link.txt"]; after == before {
+		t.Errorf("pointing the link somewhere else kept its identity %q, so a stale pass would be served", after)
+	}
+
+	commit(t, dir)
+
+	committed, err := ScanTree(git.NewSession(dir))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if got, want := committed.Hashes(onlyLink)["link.txt"], second.Hashes(onlyLink)["link.txt"]; got != want {
+		t.Errorf("committing the link changed its identity: %q before, %q after", want, got)
 	}
 }

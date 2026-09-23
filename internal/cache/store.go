@@ -1,12 +1,18 @@
 package cache
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"slices"
+	"strings"
 	"sync"
 	"time"
 )
+
+const keepPerCheck = 32
 
 type Mode struct {
 	Read  bool
@@ -23,8 +29,7 @@ type Store struct {
 	dir  string
 	mode Mode
 
-	mu     sync.Mutex
-	latest map[string]record
+	legacy sync.Once
 }
 
 type record struct {
@@ -38,7 +43,13 @@ func Open(root string, mode Mode) *Store {
 	return &Store{dir: filepath.Join(root, ".ghostci", "cache"), mode: mode}
 }
 
-func (s *Store) Lookup(fp Fingerprint) (hit bool, previous Fingerprint) {
+func (s *Store) checkDir(name string) string {
+	sum := sha256.Sum256([]byte(name))
+
+	return filepath.Join(s.dir, hex.EncodeToString(sum[:8]))
+}
+
+func (s *Store) Lookup(name string, fp Fingerprint) (hit bool, previous Fingerprint) {
 	if !s.mode.Read {
 		return false, Fingerprint{}
 	}
@@ -49,16 +60,17 @@ func (s *Store) Lookup(fp Fingerprint) (hit bool, previous Fingerprint) {
 		return false, Fingerprint{}
 	}
 
-	body, err := os.ReadFile(filepath.Join(s.dir, key+".json"))
+	path := filepath.Join(s.checkDir(name), key+".json")
 
-	if err != nil {
+	rec, ok := readRecord(path)
+
+	if !ok {
 		return false, Fingerprint{}
 	}
 
-	var rec record
-
-	if err := json.Unmarshal(body, &rec); err != nil {
-		return false, Fingerprint{}
+	if s.mode.Write {
+		now := time.Now()
+		_ = os.Chtimes(path, now, now)
 	}
 
 	return true, rec.Fingerprint
@@ -75,11 +87,14 @@ func (s *Store) Record(name string, fp Fingerprint, took time.Duration) {
 		return
 	}
 
-	if err := os.MkdirAll(s.dir, 0o755); err != nil {
+	dir := s.checkDir(name)
+
+	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return
 	}
 
 	hideFromGit(filepath.Dir(s.dir))
+	s.legacy.Do(s.dropFlatRecords)
 
 	body, err := json.MarshalIndent(record{
 		Name:        name,
@@ -92,12 +107,7 @@ func (s *Store) Record(name string, fp Fingerprint, took time.Duration) {
 		return
 	}
 
-	s.mu.Lock()
-	s.latest = nil
-	s.mu.Unlock()
-
-	path := filepath.Join(s.dir, key+".json")
-	tmp, err := os.CreateTemp(s.dir, "tmp-*")
+	tmp, err := os.CreateTemp(dir, "tmp-*")
 
 	if err != nil {
 		return
@@ -115,7 +125,15 @@ func (s *Store) Record(name string, fp Fingerprint, took time.Duration) {
 		return
 	}
 
-	_ = os.Rename(tmp.Name(), path)
+	if err := os.Rename(tmp.Name(), filepath.Join(dir, key+".json")); err != nil {
+		return
+	}
+
+	if records := history(dir); len(records) > keepPerCheck {
+		for _, old := range records[keepPerCheck:] {
+			_ = os.Remove(old)
+		}
+	}
 }
 
 func (s *Store) LastFor(name string) (Fingerprint, bool) {
@@ -135,50 +153,81 @@ func (s *Store) LastDuration(name string) time.Duration {
 }
 
 func (s *Store) newest(name string) (record, bool) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	if s.latest == nil {
-		s.latest = s.index()
+	for _, path := range history(s.checkDir(name)) {
+		if rec, ok := readRecord(path); ok {
+			return rec, true
+		}
 	}
 
-	rec, ok := s.latest[name]
-
-	return rec, ok
+	return record{}, false
 }
 
-func (s *Store) index() map[string]record {
-	out := map[string]record{}
-
-	entries, err := os.ReadDir(s.dir)
+func history(dir string) []string {
+	entries, err := os.ReadDir(dir)
 
 	if err != nil {
-		return out
+		return nil
 	}
+
+	type dated struct {
+		path string
+		at   time.Time
+	}
+
+	records := make([]dated, 0, len(entries))
 
 	for _, e := range entries {
 		if e.IsDir() || filepath.Ext(e.Name()) != ".json" {
 			continue
 		}
 
-		body, err := os.ReadFile(filepath.Join(s.dir, e.Name()))
+		info, err := e.Info()
 
 		if err != nil {
 			continue
 		}
 
-		var rec record
+		records = append(records, dated{filepath.Join(dir, e.Name()), info.ModTime()})
+	}
 
-		if err := json.Unmarshal(body, &rec); err != nil || rec.Name == "" {
-			continue
-		}
+	slices.SortFunc(records, func(a, b dated) int { return b.at.Compare(a.at) })
 
-		if prev, seen := out[rec.Name]; !seen || rec.RecordedAt.After(prev.RecordedAt) {
-			out[rec.Name] = rec
-		}
+	out := make([]string, len(records))
+	for i, r := range records {
+		out[i] = r.path
 	}
 
 	return out
+}
+
+func readRecord(path string) (record, bool) {
+	body, err := os.ReadFile(path)
+
+	if err != nil {
+		return record{}, false
+	}
+
+	var rec record
+
+	if err := json.Unmarshal(body, &rec); err != nil {
+		return record{}, false
+	}
+
+	return rec, true
+}
+
+func (s *Store) dropFlatRecords() {
+	entries, err := os.ReadDir(s.dir)
+
+	if err != nil {
+		return
+	}
+
+	for _, e := range entries {
+		if !e.IsDir() && (filepath.Ext(e.Name()) == ".json" || strings.HasPrefix(e.Name(), "tmp-")) {
+			_ = os.Remove(filepath.Join(s.dir, e.Name()))
+		}
+	}
 }
 
 func hideFromGit(dir string) {

@@ -2,7 +2,9 @@ package ghostci_test
 
 import (
 	"context"
+	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -246,5 +248,41 @@ func TestImportReportsAnUnreadableDirectory(t *testing.T) {
 
 	if _, err := ghostci.Import(filepath.Join(t.TempDir(), "absent")); err == nil {
 		t.Fatal("importing a directory that does not exist reported no error")
+	}
+}
+
+func TestFailedCountsACheckThatCouldNotRun(t *testing.T) {
+	t.Parallel()
+
+	if !ghostci.Failed([]ghostci.Result{{Name: "lint", Status: ghostci.StatusUnavailable}}) {
+		t.Error("a run that verified nothing was reported as not failed")
+	}
+}
+
+func TestRunSaysWhenACheckRewroteTheTree(t *testing.T) {
+	t.Parallel()
+
+	dir := repo(t, map[string]string{
+		"a.txt": "one\n",
+		"ghostci.yaml": `
+checks:
+  - name: rewrites
+    command: "echo more >> a.txt"
+    inputs: ["*.txt"]
+`})
+
+	if out, err := exec.Command("git", "-C", dir, "init", "-q").CombinedOutput(); err != nil {
+		t.Fatalf("git init: %v\n%s", err, out)
+	}
+
+	results, err := ghostci.Run(context.Background(), filepath.Join(dir, "ghostci.yaml"),
+		ghostci.Options{Root: dir, All: true, NoCache: true})
+
+	if !errors.Is(err, ghostci.ErrTreeChanged) {
+		t.Fatalf("err = %v, want ErrTreeChanged: the results no longer describe the tree", err)
+	}
+
+	if len(results) != 1 {
+		t.Errorf("the results were dropped along with the error: %v", results)
 	}
 }

@@ -2,6 +2,7 @@ package expr
 
 import (
 	"errors"
+	"strings"
 	"testing"
 )
 
@@ -334,6 +335,41 @@ func TestIndexReadsTheSameAsAProperty(t *testing.T) {
 	for _, src := range []string{"env.MISSING", "env['MISSING']"} {
 		if _, err := EvalString(src, ctx); err == nil {
 			t.Errorf("%s resolved without error; an absent name is not the empty string", src)
+		}
+	}
+}
+
+func TestDeepNestingIsAnErrorNotACrash(t *testing.T) {
+	t.Parallel()
+
+	for name, src := range map[string]string{
+		"parentheses": strings.Repeat("(", 1_000_000) + "1" + strings.Repeat(")", 1_000_000),
+		"negations":   strings.Repeat("!", 1_000_000) + "true",
+		"calls":       strings.Repeat("format(", 100_000) + "'x'" + strings.Repeat(")", 100_000),
+	} {
+		if _, err := Parse(src); err == nil {
+			t.Errorf("%s: a million levels parsed without error", name)
+		}
+	}
+
+	if _, err := Parse(strings.Repeat("(", 50) + "1" + strings.Repeat(")", 50)); err != nil {
+		t.Errorf("ordinary nesting was refused: %v", err)
+	}
+}
+
+func TestAListHoldingACIOnlyValueIsUndecidable(t *testing.T) {
+	t.Parallel()
+
+	ctx := Context{"jobs": map[string]any{
+		"items": []any{
+			map[string]any{"id": "known"},
+			map[string]any{"id": Unknown("jobs.items.id")},
+		},
+	}}
+
+	for _, src := range []string{"jobs.items.*.id", "jobs.items.*.id && true", "!jobs.items.*.id"} {
+		if _, err := EvalCondition(src, ctx); err == nil {
+			t.Errorf("%q was decided locally although one value is only known in CI", src)
 		}
 	}
 }
